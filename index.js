@@ -1,11 +1,11 @@
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const express = require('express');
 
-console.log('🚀 Discord Age Verification Bot Starting...');
+console.log('🚀 Discord Minor Detection Bot Starting...');
 
 // ==================== CONFIGURATION ====================
 const SERVER_ID = '1447204367089270874';
-const LOG_CHANNEL_ID = '1457870506505011331';
+const LOG_CHANNEL_ID = '1457870506505011331'; // BAN/LOG CHANNEL
 const SPECIAL_CHANNEL_ID = '1447208095217619055';
 
 // ==================== TIME FUNCTIONS ====================
@@ -18,101 +18,103 @@ function getCurrentTime() {
   });
 }
 
-function getFormattedTimestamp() {
-  const now = new Date();
-  return now.toLocaleDateString('en-US', {
-    weekday: 'short',
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric'
-  }) + ' at ' + getCurrentTime();
-}
-
-// ==================== MESSAGE VALIDATION ====================
-function validateMessage(text, channelType) {
-  if (!text || typeof text !== 'string') {
-    return {
-      action: 'delete',
-      reason: 'No text content',
-      age: null
-    };
-  }
+// ==================== MINOR DETECTION ====================
+function detectMinor(text) {
+  if (!text || typeof text !== 'string') return null;
   
-  const lowercase = text.toLowerCase().trim();
+  const lowercase = text.toLowerCase();
   
-  // CHECK 1: ANY AGE MENTIONED AT ALL? (1-99)
-  // Look for ANY number 1-99 in the text
-  const ageMatch = lowercase.match(/\b([1-9]|[1-9][0-9])\b/);
+  // PATTERN 1: "REVERSED" OR SWAP EMOJIS (MEANS UNDER 18)
+  const reversedPatterns = [
+    /\breversed\b/i,
+    /🔃|🔄|↩️|↪️|🔄️/, // Swap/Reverse emojis
+    /\bswap\b/i,
+    /\bother way around\b/i,
+    /\bu18\b/i,
+    /\bu18\s*🔃/i,
+    /\bu18\s*🔄/i,
+  ];
   
-  if (!ageMatch) {
-    // NO AGE MENTIONED AT ALL → DELETE IN BOTH CHANNELS
-    return {
-      action: 'delete_no_age',
-      reason: 'No age mentioned',
-      age: null
-    };
-  }
-  
-  const age = parseInt(ageMatch[1]);
-  
-  // CHECK 2: IS IT A MINOR? (1-17)
-  if (age >= 1 && age <= 17) {
-    return {
-      action: 'delete_minor',
-      reason: `Minor detected (${age} years)`,
-      age: age
-    };
-  }
-  
-  // CHECK 3: IS IT ADULT? (18-99)
-  if (age >= 18 && age <= 99) {
-    if (channelType === 'special') {
-      return {
-        action: 'check_attachments',
-        reason: 'Adult age, check attachments for special channel',
-        age: age
-      };
+  for (const pattern of reversedPatterns) {
+    if (pattern.test(lowercase)) {
+      return { age: 'reversed', reason: 'Reversed/swap detected (under 18)' };
     }
-    return {
-      action: 'allow',
-      reason: 'Adult age mentioned',
-      age: age
-    };
   }
   
-  // Fallback
-  return {
-    action: 'delete',
-    reason: 'Invalid age format',
-    age: null
-  };
+  // PATTERN 2: ANY NUMBER 1-17 MENTIONED
+  const agePatterns = [
+    // Simple numbers 1-17
+    /\b(1[0-7]|[1-9])\b/,
+    
+    // With gender: "17m", "16f", "15 male"
+    /\b(1[0-7]|[1-9])\s*(m|f|male|female)\b/i,
+    
+    // With age indicator: "17yo", "16 years"
+    /\b(1[0-7]|[1-9])\s*(yo|y\.o\.|years?|yrs?|y\/o)\b/i,
+    
+    // Looking for/chatting with age: "looking for 17", "chat 16"
+    /\b(?:looking|searching|seeking|want|need|for|find|meet|chat|talk|dm|dms|hmu|cam|wanna)\s+(1[0-7]|[1-9])\b/i,
+    
+    // Age ranges: "17+", "16+"
+    /\b(1[0-7]|[1-9])\s*\+/,
+    
+    // M61🔄, M71🔃 patterns
+    /[mf]\s*(1[0-7]|[1-9])\s*[🔃🔄↩️↪️]/i,
+    /(1[0-7]|[1-9])\s*[🔃🔄↩️↪️]/i,
+    
+    // "51 reversed", "61 🔄" etc
+    /\b(\d{1,2})\s*(?:reversed|swap|🔃|🔄|↩️|↪️)\b/i,
+    /\b(?:reversed|swap|🔃|🔄|↩️|↪️)\s*(\d{1,2})\b/i,
+  ];
+  
+  for (const pattern of agePatterns) {
+    const match = lowercase.match(pattern);
+    if (match) {
+      // Find the number in match
+      for (const group of match) {
+        if (group && /^\d+$/.test(group)) {
+          const age = parseInt(group);
+          if (age >= 1 && age <= 17) {
+            return { age: age, reason: `Minor age ${age} detected` };
+          }
+        }
+      }
+    }
+  }
+  
+  // PATTERN 3: SPECIFIC MINOR PHRASES
+  const minorPhrases = [
+    /\bu18 looking/i,
+    /\bunder 18/i,
+    /\bunderage/i,
+    /\bminor\b/i,
+    /\bhigh school\b/i,
+    /\bhs\b/i,
+  ];
+  
+  for (const phrase of minorPhrases) {
+    if (phrase.test(lowercase)) {
+      return { age: 'phrase', reason: 'Minor phrase detected' };
+    }
+  }
+  
+  return null;
 }
 
-// ==================== ATTACHMENT CHECK ====================
+// ==================== ATTACHMENT CHECK (FOR SPECIAL CHANNEL ONLY) ====================
 function checkAttachments(attachments) {
   if (!attachments || attachments.size === 0) {
-    return {
-      valid: false,
-      reason: 'No attachments'
-    };
+    return false;
   }
   
-  const valid = Array.from(attachments.values()).some(att => {
-    // Accept any Discord attachment
-    return att.url && (
-      att.url.includes('cdn.discordapp.com') || 
-      att.url.includes('media.discordapp.net') ||
-      (att.contentType && (
-        att.contentType.startsWith('image/') ||
-        att.contentType.startsWith('video/')
-      ))
-    );
-  });
-  
-  return {
-    valid: valid,
-    reason: valid ? 'Has valid attachment' : 'No valid attachments'
-  };
+  return Array.from(attachments.values()).some(att => 
+    att.url.includes('cdn.discordapp.com') || 
+    att.url.includes('media.discordapp.net') ||
+    (att.contentType && (
+      att.contentType.startsWith('image/') ||
+      att.contentType.startsWith('video/')
+    ))
+  );
 }
 
 // ==================== DISCORD CLIENT ====================
@@ -129,10 +131,9 @@ const client = new Client({
 client.once('ready', () => {
   console.log(`✅ Bot Online: ${client.user.tag}`);
   console.log(`📊 Connected to ${client.guilds.cache.size} server(s)`);
-  console.log(`👁️  Watching for age verification...`);
+  console.log(`👁️  Watching for minors in all channels...`);
   
-  // Set bot status
-  client.user.setActivity('age verification ⚠️', { 
+  client.user.setActivity('minor detection ⚠️', { 
     type: 'WATCHING' 
   });
 });
@@ -145,103 +146,69 @@ client.on('messageCreate', async (msg) => {
   
   try {
     const isSpecialChannel = msg.channel.id === SPECIAL_CHANNEL_ID;
-    const validation = validateMessage(msg.content, isSpecialChannel ? 'special' : 'regular');
     
-    // Handle validation results
-    switch (validation.action) {
-      case 'delete_no_age':
-        // NO AGE MENTIONED → DELETE IN BOTH CHANNELS
-        await msg.delete();
-        console.log(`🗑️ No age mentioned from ${msg.author.tag}: "${msg.content.substring(0, 50)}..."`);
+    // SAME LOGIC FOR BOTH CHANNELS: MINOR DETECTION
+    const minorDetection = detectMinor(msg.content);
+    
+    if (minorDetection !== null) {
+      // DELETE MESSAGE (BOTH CHANNELS)
+      await msg.delete();
+      console.log(`🚨 Minor detected: ${msg.author.tag} - ${minorDetection.reason}`);
+      
+      // LOG TO BAN CHANNEL ONLY (BOTH CHANNELS)
+      const logChannel = msg.guild.channels.cache.get(LOG_CHANNEL_ID);
+      if (logChannel) {
+        const embed = new EmbedBuilder()
+          .setColor('#FF0000')
+          .setTitle('⚠️ Minor Detected')
+          .setDescription(
+            `**User:** ${msg.author.username} (${msg.author.id})\n` +
+            `**Reason:** ${minorDetection.reason}\n` +
+            `**Channel:** <#${msg.channel.id}>\n` +
+            `**Time:** ${getCurrentTime()}\n\n` +
+            `**Message:**\n${msg.content.substring(0, 500)}\n\n` +
+            `**Action Required:**`
+          )
+          .setTimestamp();
         
-        // Send DM explanation
-        try {
-          await msg.author.send({
-            content: `## ⚠️ Message Deleted\n\n` +
-                    `**Channel:** <#${msg.channel.id}>\n` +
-                    `**Reason:** No age mentioned\n\n` +
-                    `**Rule:** All messages must include your age (18+ only).\n` +
-                    `**Examples:** "18", "25", "I'm 21", "22 looking", "19 m"\n\n` +
-                    `Messages without age like "dms open" or "anyone?" are not allowed.`
-          });
-        } catch (dmError) {
-          // Can't DM, that's fine
-        }
-        break;
+        const actionRow = new ActionRowBuilder()
+          .addComponents(
+            new ButtonBuilder()
+              .setCustomId(`ban_${msg.author.id}_${msg.id}`)
+              .setLabel('Ban User')
+              .setStyle(ButtonStyle.Danger),
+            new ButtonBuilder()
+              .setCustomId(`ignore_${msg.author.id}_${msg.id}`)
+              .setLabel('Ignore')
+              .setStyle(ButtonStyle.Secondary)
+          );
         
-      case 'delete_minor':
-        // MINOR DETECTED → DELETE + LOG
-        await msg.delete();
-        console.log(`🚨 Minor (${validation.age}y) from ${msg.author.tag}`);
-        
-        // Log to moderation channel
-        const logChannel = msg.guild.channels.cache.get(LOG_CHANNEL_ID);
-        if (logChannel) {
-          const embed = new EmbedBuilder()
-            .setColor('#FF0000')
-            .setTitle('⚠️ Minor Detected')
-            .setDescription(
-              `**User:** ${msg.author.username} (${msg.author.id})\n` +
-              `**Age:** ${validation.age} years\n` +
-              `**Channel:** <#${msg.channel.id}>\n` +
-              `**Time:** ${getCurrentTime()}\n\n` +
-              `**Message Content:**\n${msg.content.substring(0, 500)}`
-            )
-            .setTimestamp();
-          
-          const actionRow = new ActionRowBuilder()
-            .addComponents(
-              new ButtonBuilder()
-                .setCustomId(`ban_${msg.author.id}_${msg.id}`)
-                .setLabel('Ban User')
-                .setStyle(ButtonStyle.Danger),
-              new ButtonBuilder()
-                .setCustomId(`ignore_${msg.author.id}_${msg.id}`)
-                .setLabel('Ignore')
-                .setStyle(ButtonStyle.Secondary)
-            );
-          
-          await logChannel.send({ embeds: [embed], components: [actionRow] });
-        }
-        break;
-        
-      case 'check_attachments':
-        // SPECIAL CHANNEL: Has adult age, check attachments
-        if (!isSpecialChannel) break;
-        
-        const attachmentCheck = checkAttachments(msg.attachments);
-        
-        if (!attachmentCheck.valid) {
-          await msg.delete();
-          console.log(`🗑️ Special channel: No attachment from ${msg.author.tag} (age: ${validation.age})`);
-          
-          try {
-            await msg.author.send({
-              content: `## ⚠️ Special Channel Message Deleted\n\n` +
-                      `**Channel:** <#${SPECIAL_CHANNEL_ID}>\n` +
-                      `**Your Age:** ${validation.age} ✓\n` +
-                      `**Missing:** Photo/video attachment ✗\n\n` +
-                      `**Requirements:**\n` +
-                      `1. Age 18+ ✓\n` +
-                      `2. Photo/video attachment ✗\n\n` +
-                      `Please add at least one image or video and repost.`
-            });
-          } catch (dmError) {
-            // Can't DM, that's fine
-          }
-        } else {
-          console.log(`✅ Special: Valid post from ${msg.author.tag} (${validation.age}y)`);
-        }
-        break;
-        
-      case 'allow':
-        // Message is allowed (has adult age)
-        console.log(`✅ Allowed: ${msg.author.tag} (${validation.age}y) in ${isSpecialChannel ? 'special' : 'regular'} channel`);
-        break;
+        await logChannel.send({ 
+          embeds: [embed], 
+          components: [actionRow] 
+        });
+      }
+      
+      return; // Stop processing
     }
     
+    // SPECIAL CHANNEL EXTRA RULE: MUST HAVE PHOTO/VIDEO
+    if (isSpecialChannel) {
+      const hasValidAttachment = checkAttachments(msg.attachments);
+      
+      if (!hasValidAttachment) {
+        await msg.delete();
+        console.log(`🗑️ Special channel: No photo/video from ${msg.author.tag}`);
+        // NO DM, just delete
+        return;
+      }
+    }
+    
+    // If we get here, message is allowed
+    console.log(`✅ Allowed: ${msg.author.tag} in ${isSpecialChannel ? 'special' : 'regular'} channel`);
+    
   } catch (error) {
-    console.error('❌ Error in message handler:', error.message);
+    console.error('❌ Error:', error.message);
   }
 });
 
@@ -251,7 +218,6 @@ client.on('interactionCreate', async (interaction) => {
   
   const [action, userId, messageId] = interaction.customId.split('_');
   const time = getCurrentTime();
-  const timestamp = getFormattedTimestamp();
   
   if (!interaction.guild) {
     return interaction.reply({ 
@@ -271,10 +237,10 @@ client.on('interactionCreate', async (interaction) => {
           reason: `Minor detected - Action by ${interaction.user.tag}` 
         });
         
-        // Update the log message
+        // Update log message
         const embed = EmbedBuilder.from(interaction.message.embeds[0])
           .setColor('#990000')
-          .setFooter({ text: `Banned by @${interaction.user.username} • ${timestamp}` });
+          .setFooter({ text: `Banned by @${interaction.user.username} • ${time}` });
         
         await interaction.message.edit({ 
           embeds: [embed], 
@@ -282,21 +248,17 @@ client.on('interactionCreate', async (interaction) => {
         });
         
         await interaction.editReply({ 
-          content: `✅ Successfully banned <@${userId}>` 
+          content: `✅ Banned <@${userId}>` 
         });
         
-        console.log(`🔨 Banned ${member.user.tag} (by ${interaction.user.tag})`);
-      } else {
-        await interaction.editReply({ 
-          content: '❌ User not found in this server.' 
-        });
+        console.log(`🔨 Banned ${member.user.tag}`);
       }
     }
     else if (action === 'ignore') {
-      // Update the log message
+      // Update log message
       const embed = EmbedBuilder.from(interaction.message.embeds[0])
         .setColor('#666666')
-        .setFooter({ text: `Ignored by @${interaction.user.username} • ${timestamp}` });
+        .setFooter({ text: `Ignored by @${interaction.user.username} • ${time}` });
       
       await interaction.message.edit({ 
         embeds: [embed], 
@@ -304,15 +266,14 @@ client.on('interactionCreate', async (interaction) => {
       });
       
       await interaction.editReply({ 
-        content: '✅ Case ignored and closed.' 
+        content: '✅ Case ignored' 
       });
       
-      console.log(`✅ Case ignored by ${interaction.user.tag}`);
+      console.log(`✅ Case ignored`);
     }
   } catch (error) {
-    console.error('❌ Button interaction error:', error.message);
     await interaction.editReply({ 
-      content: '❌ An error occurred while processing this action.' 
+      content: '❌ Error processing action' 
     });
   }
 });
@@ -321,95 +282,36 @@ client.on('interactionCreate', async (interaction) => {
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Health check endpoint
 app.get('/', (req, res) => {
   res.json({ 
     status: 'online',
     bot: client.user?.tag || 'Starting...',
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
-    memory: process.memoryUsage(),
-    version: '1.0.0'
+    uptime: process.uptime()
   });
 });
 
-// Status endpoint
-app.get('/status', (req, res) => {
-  const status = {
-    bot: {
-      ready: client.isReady(),
-      tag: client.user?.tag || 'Not ready',
-      id: client.user?.id || 'N/A',
-      uptime: client.uptime || 0
-    },
-    system: {
-      uptime: process.uptime(),
-      memory: process.memoryUsage(),
-      platform: process.platform,
-      node: process.version
-    },
-    server: {
-      guilds: client.guilds?.cache?.size || 0,
-      channels: client.channels?.cache?.size || 0,
-      users: client.users?.cache?.size || 0
-    }
-  };
-  
-  res.json(status);
-});
-
-// Start the server
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🌐 Health check server running on port ${PORT}`);
-  console.log(`🔗 Health check URL: http://localhost:${PORT}`);
-  console.log(`📊 Status endpoint: http://localhost:${PORT}/status`);
+  console.log(`🌐 Health check: http://localhost:${PORT}`);
 });
 
 // ==================== GRACEFUL SHUTDOWN ====================
 process.on('SIGTERM', async () => {
-  console.log('🔄 SIGTERM received. Shutting down gracefully...');
-  
-  try {
-    await client.destroy();
-    server.close(() => {
-      console.log('✅ Shutdown complete');
-      process.exit(0);
-    });
-  } catch (error) {
-    console.error('❌ Error during shutdown:', error);
-    process.exit(1);
-  }
+  console.log('🔄 Shutting down...');
+  await client.destroy();
+  server.close();
+  process.exit(0);
 });
 
 process.on('SIGINT', async () => {
-  console.log('🔄 SIGINT received. Shutting down gracefully...');
-  
-  try {
-    await client.destroy();
-    server.close(() => {
-      console.log('✅ Shutdown complete');
-      process.exit(0);
-    });
-  } catch (error) {
-    console.error('❌ Error during shutdown:', error);
-    process.exit(1);
-  }
-});
-
-// ==================== ERROR HANDLING ====================
-process.on('unhandledRejection', (error) => {
-  console.error('❌ Unhandled promise rejection:', error);
-});
-
-process.on('uncaughtException', (error) => {
-  console.error('❌ Uncaught exception:', error);
-  process.exit(1);
+  console.log('🔄 Shutting down...');
+  await client.destroy();
+  server.close();
+  process.exit(0);
 });
 
 // ==================== BOT LOGIN ====================
-console.log('🔑 Attempting to login to Discord...');
+console.log('🔑 Logging in...');
 client.login(process.env.BOT_TOKEN).catch(err => {
   console.error('❌ Login failed:', err.message);
-  console.error('⚠️ Please check your BOT_TOKEN environment variable');
   process.exit(1);
 });
