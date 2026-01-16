@@ -39,7 +39,7 @@ async function askAI(question) {
       return answer.includes('YES') ? 'YES' : 'NO';
       
     } catch (error) {
-      console.log(`❌ Key ${currentKeyIndex} failed, rotating...`);
+      console.log(`❌ Key ${currentKeyIndex} failed, trying next...`);
       rotateKey();
       await new Promise(resolve => setTimeout(resolve, 300));
     }
@@ -47,19 +47,18 @@ async function askAI(question) {
   return 'NO'; // If all keys fail, delete message
 }
 
-// ==================== IMPROVED AGE CHECK ====================
+// ==================== AGE CHECK FUNCTION ====================
 async function isUser18Plus(messageText) {
   const prompt = `Message: "${messageText.substring(0, 300)}"
   
-  Question: Does this user mention being 18 years old or OLDER?
+  Question: Is the user mentioning they are 18 years old or OLDER?
   
-  IMPORTANT: Only answer YES if CLEARLY 18+.
-  If unsure, no age, or under 18 → answer NO.
+  Answer ONLY: YES or NO
   
-  Examples YES: "18top", "23m", "25f", "I'm 20", "age 22"
-  Examples NO: "15", "16", "17", "u18", "41 reversed", "hello", "my dick 20cm"
-  
-  Answer ONLY: YES or NO`;
+  Examples:
+  - "18top", "23m", "25f" → YES
+  - "15", "16yo", "41 reversed" → NO
+  - "hello", "my dick is 20cm" → NO`;
   
   return await askAI(prompt);
 }
@@ -100,17 +99,17 @@ client.on('messageCreate', async (msg) => {
       // 1. Check attachment FIRST
       if (!hasAttachment(msg.attachments)) {
         await msg.delete();
-        console.log(`📸 Special channel: Deleted (no attachment)`);
+        console.log(`📸 Deleted: No attachment in media channel`);
         return;
       }
       
-      // 2. THEN check age (IMPORTANT FIX!)
+      // 2. THEN check age
       const result = await isUser18Plus(msg.content);
-      console.log(`📸 Special channel: "${msg.content.substring(0, 30)}..." → ${result}`);
+      console.log(`📸 Media channel check: "${msg.content.substring(0, 30)}..." → ${result}`);
       
       if (result === 'NO') {
         await msg.delete();
-        await logMinorDetection(msg, 'SPECIAL_CHANNEL');
+        await logMinorDetection(msg, 'MEDIA_CHANNEL');
         return;
       }
       // If YES, message stays
@@ -119,7 +118,7 @@ client.on('messageCreate', async (msg) => {
     
     // ========== REGULAR CHANNELS LOGIC ==========
     const result = await isUser18Plus(msg.content);
-    console.log(`💬 Regular channel: "${msg.content.substring(0, 30)}..." → ${result}`);
+    console.log(`💬 Regular check: "${msg.content.substring(0, 30)}..." → ${result}`);
     
     if (result === 'NO') {
       await msg.delete();
@@ -140,19 +139,13 @@ async function logMinorDetection(msg, channelType) {
     return;
   }
   
-  // Only log if message was actually deleted for age reasons
-  if (!msg.content || msg.content.trim() === '') {
-    console.log('⚠️ Not logging: Empty message');
+  // Only log meaningful content
+  if (!msg.content || msg.content.trim().length < 5) {
+    console.log('⚠️ Skipping log: Message too short or empty');
     return;
   }
   
-  // Don't log super short messages (likely spam/random shit)
-  if (msg.content.length < 3) {
-    console.log('⚠️ Not logging: Message too short');
-    return;
-  }
-  
-  console.log(`📋 Logging minor detection from ${channelType}`);
+  console.log(`📋 Logging to moderation channel`);
   
   const embed = new EmbedBuilder()
     .setColor('#FF0000')
@@ -161,11 +154,11 @@ async function logMinorDetection(msg, channelType) {
       name: msg.author.tag,
       iconURL: msg.author.displayAvatarURL({ dynamic: true })
     })
-    .setDescription(`**Content:**\n\`\`\`${msg.content.substring(0, 1000)}\`\`\``)
+    .setDescription(`**Message:**\n\`\`\`${msg.content.substring(0, 1000)}\`\`\``)
     .addFields(
       { name: 'User ID', value: `\`${msg.author.id}\``, inline: true },
       { name: 'Channel', value: `<#${msg.channel.id}>`, inline: true },
-      { name: 'Channel Type', value: channelType, inline: true }
+      { name: 'Type', value: channelType, inline: true }
     )
     .setTimestamp();
   
