@@ -22,13 +22,14 @@ function getFormattedTimestamp() {
   return `Today at ${getCurrentTime()}`;
 }
 
-// ==================== MINOR DETECTION ====================
-function detectMinor(text) {
-  if (!text || typeof text !== 'string') return null;
+// ==================== MESSAGE VALIDATION ====================
+function validateMessage(text) {
+  if (!text || typeof text !== 'string') return { valid: false, reason: 'no_text' };
   
   const lowercase = text.toLowerCase();
   
-  // 1. REVERSED/SWAP/🔄 = MINORE CERCA MAGGIORENNE
+  // 1. CHECK FOR MINORS FIRST
+  // REVERSED/SWAP/🔄 = MINORE CERCA MAGGIORENNE
   if (lowercase.includes('reversed') || lowercase.includes('swap') || 
       lowercase.includes('🔄') || lowercase.includes('🔃') || 
       lowercase.includes('↪️') || lowercase.includes('↩️')) {
@@ -36,20 +37,17 @@ function detectMinor(text) {
     const numberMatch = lowercase.match(/\b(\d{1,2})\b/);
     if (numberMatch) {
       const age = parseInt(numberMatch[1]);
-      return { age: age, reason: 'underage (reversed)' };
+      return { valid: false, reason: 'minor', details: `underage (reversed - looking for ${age}+)` };
     }
-    return { age: 'unknown', reason: 'underage (reversed/swap)' };
+    return { valid: false, reason: 'minor', details: 'underage (reversed/swap)' };
   }
   
-  // 2. NUMERI SCAMBIATI 51=15, 61=16, 71=17
+  // NUMERI SCAMBIATI 51=15, 61=16, 71=17
   if (lowercase.includes('51') || lowercase.includes('61') || lowercase.includes('71')) {
-    return { age: 'swapped', reason: 'underage (swapped number)' };
+    return { valid: false, reason: 'minor', details: 'underage (swapped number 51/61/71)' };
   }
   
-  // 3. SOLO SE DICHIARA LA SUA ETÀ, NON MISURE!
-  // Pattern specifici per ETÀ
-  
-  // "I'm 17", "I am 16", "age 15"
+  // CHECK FOR DIRECT MINOR AGES 1-17
   const agePatterns = [
     /(?:i'?m|i am|im|age is|aged?)\s+(\d{1,2})\b/i,
     /\b(\d{1,2})\s*(?:yo|y\.o\.|years? old|y\/o|anni?)\b/i,
@@ -62,12 +60,12 @@ function detectMinor(text) {
     if (match && match[1]) {
       const age = parseInt(match[1]);
       if (age >= 1 && age <= 17) {
-        return { age: age, reason: 'underage' };
+        return { valid: false, reason: 'minor', details: `underage (${age} years)` };
       }
     }
   }
   
-  // IGNORA MISURE: "8cm", "7.5"", "18cm" - NON SONO ETÀ!
+  // IGNORA MISURE: "8cm", "7.5"", "18cm"
   const measurementPatterns = [
     /\b\d+(?:\.\d+)?\s*(?:cm|centimeters?|in|inches?|")\b/i,
     /\bmine is\s+\d+/i,
@@ -78,11 +76,27 @@ function detectMinor(text) {
   
   for (const pattern of measurementPatterns) {
     if (pattern.test(lowercase)) {
-      return null; // È una misura, ignora
+      // È una misura, continua a controllare per età
     }
   }
   
-  return null;
+  // 2. CHECK IF ANY AGE 18+ IS MENTIONED (REQUIRED IN ALL CHANNELS)
+  const anyAgePattern = /\b(1[8-9]|[2-9][0-9])\b/;
+  const hasAge = anyAgePattern.test(lowercase);
+  
+  if (!hasAge) {
+    return { valid: false, reason: 'no_age', details: 'No age 18+ mentioned' };
+  }
+  
+  // 3. CHECK FOR ADULT AGE WITH MEASUREMENTS CONTEXT
+  // Se ha un'età 18+ ma anche misure, va bene
+  const adultAgeWithMeasurePattern = /\b(1[8-9]|[2-9][0-9])\b.*\b\d+(?:\.\d+)?\s*(?:cm|in|")\b/i;
+  if (adultAgeWithMeasurePattern.test(lowercase)) {
+    return { valid: true, reason: 'adult_with_measurements' };
+  }
+  
+  // Se ha solo età 18+ senza contesto strano
+  return { valid: true, reason: 'adult' };
 }
 
 // ==================== ATTACHMENT CHECK ====================
@@ -114,7 +128,7 @@ client.once('ready', () => {
   console.log(`✅ Bot Online: ${client.user.tag}`);
   console.log(`📊 Connected to ${client.guilds.cache.size} server(s)`);
   
-  client.user.setActivity('minor detection ⚠️', { type: 'WATCHING' });
+  client.user.setActivity('age verification ⚠️', { type: 'WATCHING' });
 });
 
 // ==================== MESSAGE HANDLER ====================
@@ -125,41 +139,46 @@ client.on('messageCreate', async (msg) => {
   try {
     const isSpecialChannel = msg.channel.id === SPECIAL_CHANNEL_ID;
     
-    // CHECK MINORS
-    const minorDetection = detectMinor(msg.content);
+    // VALIDATE MESSAGE CONTENT
+    const validation = validateMessage(msg.content);
     
-    if (minorDetection !== null) {
+    if (!validation.valid) {
       await msg.delete();
-      console.log(`🚨 Minor: ${msg.author.tag} - "${minorDetection.reason}"`);
       
-      const logChannel = msg.guild.channels.cache.get(LOG_CHANNEL_ID);
-      if (logChannel) {
-        const timestamp = getFormattedTimestamp();
+      if (validation.reason === 'minor') {
+        console.log(`🚨 Minor: ${msg.author.tag} - ${validation.details}`);
         
-        const embed = new EmbedBuilder()
-          .setColor('#2b2d31')
-          .setAuthor({
-            name: `${msg.author.username}`,
-            iconURL: msg.author.displayAvatarURL({ dynamic: true })
-          })
-          .setDescription(`\`\`\`${msg.content}\`\`\``)
-          .setFooter({
-            text: `id: ${msg.author.id} | reason: ${minorDetection.reason} | ${timestamp}`
-          });
-        
-        const actionRow = new ActionRowBuilder()
-          .addComponents(
-            new ButtonBuilder()
-              .setCustomId(`ban_${msg.author.id}_${Date.now()}`)
-              .setLabel('banna')
-              .setStyle(ButtonStyle.Danger),
-            new ButtonBuilder()
-              .setCustomId(`ignore_${msg.author.id}_${Date.now()}`)
-              .setLabel('ignora')
-              .setStyle(ButtonStyle.Secondary)
-          );
-        
-        await logChannel.send({ embeds: [embed], components: [actionRow] });
+        const logChannel = msg.guild.channels.cache.get(LOG_CHANNEL_ID);
+        if (logChannel) {
+          const timestamp = getFormattedTimestamp();
+          
+          const embed = new EmbedBuilder()
+            .setColor('#2b2d31')
+            .setAuthor({
+              name: `${msg.author.username}`,
+              iconURL: msg.author.displayAvatarURL({ dynamic: true })
+            })
+            .setDescription(`\`\`\`${msg.content}\`\`\``)
+            .setFooter({
+              text: `id: ${msg.author.id} | reason: underage | ${timestamp}`
+            });
+          
+          const actionRow = new ActionRowBuilder()
+            .addComponents(
+              new ButtonBuilder()
+                .setCustomId(`ban_${msg.author.id}_${Date.now()}`)
+                .setLabel('banna')
+                .setStyle(ButtonStyle.Danger),
+              new ButtonBuilder()
+                .setCustomId(`ignore_${msg.author.id}_${Date.now()}`)
+                .setLabel('ignora')
+                .setStyle(ButtonStyle.Secondary)
+            );
+          
+          await logChannel.send({ embeds: [embed], components: [actionRow] });
+        }
+      } else {
+        console.log(`🗑️ No age: ${msg.author.tag} - "${msg.content.substring(0, 50)}..."`);
       }
       return;
     }
@@ -175,7 +194,7 @@ client.on('messageCreate', async (msg) => {
       }
     }
     
-    console.log(`✅ Allowed: ${msg.author.tag}`);
+    console.log(`✅ Allowed: ${msg.author.tag} - ${validation.reason}`);
     
   } catch (error) {
     console.error('❌ Error:', error.message);
