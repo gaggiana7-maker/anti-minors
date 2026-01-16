@@ -32,7 +32,7 @@ async function askAI(prompt) {
         messages: [{ role: "user", content: prompt }],
         model: "llama-3.3-70b-versatile",
         temperature: 0.1,
-        max_tokens: 200,
+        max_tokens: 150,
         response_format: { type: "json_object" }
       });
       
@@ -44,22 +44,19 @@ async function askAI(prompt) {
       await new Promise(resolve => setTimeout(resolve, 300));
     }
   }
-  return { is_minor: false, confidence: 'low', reason: 'AI failed' };
+  return { should_delete: true, is_minor: false, confidence: 'low', reason: 'AI failed' };
 }
 
 // ==================== REVERSED CODE DETECTION ====================
 function isReversedAgeCode(text) {
   const lower = text.toLowerCase();
   
-  // Check for reversed codes with indicators
   const patterns = [
     /(41|51|61|71).*(reversed|swap|🔄|🔃|↩|↪|inverted|flipped)/i,
     /(reversed|swap|🔄|🔃|↩|↪|inverted|flipped).*(41|51|61|71)/i,
     /\((?:reversed|swap).*age\)/i,
     /reversed.*age/i,
-    /swap.*age/i,
-    /age.*reversed/i,
-    /age.*swap/i
+    /swap.*age/i
   ];
   
   for (const pattern of patterns) {
@@ -81,38 +78,65 @@ function isReversedAgeCode(text) {
   return { detected: false };
 }
 
+// ==================== QUICK CHECK FOR DATING MESSAGES ====================
+function isDatingMessage(text) {
+  const lower = text.toLowerCase();
+  const datingPhrases = [
+    'dms open', 'dm me', 'dm open', 'looking for', 'searching for', 
+    'want', 'need', 'hmu', 'hit me up', 'message me', 'anyone', 
+    'someone', 'buds', 'buddies', 'friends', 'fun', 'play', 
+    'jerk', 'sext', 'sex', 'nsfw', 'kinky', 'horny', 'bottom',
+    'top', 'vers', 'sub', 'dom', 'daddy', 'boy', 'girl'
+  ];
+  
+  return datingPhrases.some(phrase => lower.includes(phrase));
+}
+
 // ==================== AGE CHECK ====================
-async function checkAge(messageText) {
-  // 1. CHECK FOR REVERSED CODES FIRST (100% certain)
+async function checkMessage(messageText) {
+  // 1. CHECK FOR REVERSED CODES
   const reversedCheck = isReversedAgeCode(messageText);
   if (reversedCheck.detected) {
-    console.log(`🚨 CERTAIN MINOR: ${reversedCheck.reason}`);
-    return { is_minor: true, confidence: 'high', reason: reversedCheck.reason };
+    console.log(`🚨 REVERSED CODE: ${reversedCheck.reason}`);
+    return { should_delete: true, is_minor: true, confidence: 'high', reason: reversedCheck.reason };
   }
   
-  // 2. CHECK FOR "18" (100% certain adult)
+  // 2. CHECK FOR "18" (AUTO APPROVE)
   if (/\b18\b/i.test(messageText)) {
-    console.log(`✅ CERTAIN ADULT: Contains "18"`);
-    return { is_minor: false, confidence: 'high', reason: 'Age 18 mentioned' };
+    console.log(`✅ AUTO-APPROVE: Contains "18"`);
+    return { should_delete: false, is_minor: false, confidence: 'high', reason: 'Age 18 mentioned' };
   }
   
-  // 3. ASK AI FOR EVERYTHING ELSE
-  const prompt = `Analyze: "${messageText}"
+  // 3. CHECK FOR CLEAR ADULT AGES (19-59)
+  if (/\b(?:19|2[0-9]|[3-5][0-9])\s*(?:m|f|yo|y\.o|years|anni)\b/i.test(messageText)) {
+    console.log(`✅ CLEAR ADULT: Adult age mentioned`);
+    return { should_delete: false, is_minor: false, confidence: 'high', reason: 'Clear adult age' };
+  }
   
-  Is the user mentioning being UNDER 18 years old?
+  // 4. ASK AI FOR EVERYTHING ELSE
+  const prompt = `Message: "${messageText}"
+  
+  Analyze this Discord message in a dating/NSFW server.
+  
+  Questions:
+  1. Should this message be deleted? (YES if: under 18, no age mentioned in dating context)
+  2. If deleted, is it because user is a minor? (YES if: age < 18 mentioned)
   
   Rules:
-  1. "41 reversed", "51 swap", "61 🔄", "71 🔃" = UNDER 18 (already caught)
-  2. "18", "19", "20+" = 18+ (adult)
-  3. "15", "16", "17" = UNDER 18
-  4. No age mentioned = NOT minor (just delete, don't log)
+  - Dating messages MUST include age (18+)
+  - "DMs open", "looking for" without age = DELETE
+  - "23m", "25f" with age = KEEP
+  - "15", "16" = DELETE + MINOR
+  - "hello", general chat = KEEP (if not dating)
   
-  Return JSON: {is_minor: boolean, confidence: 'high/medium/low', reason: 'brief explanation'}
+  Return JSON: {
+    should_delete: boolean,
+    is_minor: boolean (true if age < 18),
+    confidence: 'high/medium/low',
+    reason: 'explanation'
+  }`;
   
-  Only mark as minor (is_minor: true) if CERTAIN about age under 18.`;
-  
-  const result = await askAI(prompt);
-  return result;
+  return await askAI(prompt);
 }
 
 // ==================== ATTACHMENT CHECK ====================
@@ -143,7 +167,6 @@ client.on('messageCreate', async (msg) => {
   if (msg.author.bot) return;
   if (!msg.guild || msg.guild.id !== SERVER_ID) return;
   
-  // Skip very short
   if (!msg.content || msg.content.trim().length < 2) return;
   
   try {
@@ -155,43 +178,36 @@ client.on('messageCreate', async (msg) => {
       return;
     }
     
-    // CHECK AGE
-    const ageCheck = await checkAge(msg.content);
-    console.log(`🤖 "${msg.content.substring(0, 40)}..." → Minor: ${ageCheck.is_minor}, Conf: ${ageCheck.confidence}`);
+    // CHECK MESSAGE
+    const check = await checkMessage(msg.content);
+    console.log(`🤖 "${msg.content.substring(0, 40)}..." → Delete: ${check.should_delete}, Minor: ${check.is_minor}`);
     
-    if (ageCheck.is_minor && ageCheck.confidence === 'high') {
-      // CERTAIN MINOR → Delete + Log
+    if (check.should_delete) {
       await msg.delete();
-      await logMinorDetection(msg, ageCheck);
-    } else if (ageCheck.is_minor && ageCheck.confidence !== 'high') {
-      // UNCERTAIN MINOR → Delete only, NO LOG
-      await msg.delete();
-      console.log('🗑️ Deleted (uncertain), not logging');
-    } else {
-      // NOT MINOR → Message stays
+      
+      // ONLY LOG IF CERTAIN MINOR
+      if (check.is_minor && check.confidence === 'high') {
+        await logMinorDetection(msg, check);
+      } else {
+        console.log('🗑️ Deleted (not logged)');
+      }
     }
+    // If should_delete = false, message stays
     
   } catch (error) {
     console.error('Error:', error.message);
   }
 });
 
-// ==================== LOGGING - ONLY CERTAIN MINORS ====================
-async function logMinorDetection(msg, ageCheck) {
-  // ONLY log HIGH confidence, CERTAIN minors
-  if (ageCheck.confidence !== 'high' || !ageCheck.is_minor) {
-    return;
-  }
-  
-  // Don't log short messages
-  if (!msg.content || msg.content.trim().length < 5) {
-    return;
-  }
+// ==================== LOGGING ====================
+async function logMinorDetection(msg, check) {
+  if (!check.is_minor || check.confidence !== 'high') return;
+  if (!msg.content || msg.content.trim().length < 5) return;
   
   const logChannel = client.channels.cache.get(LOG_CHANNEL_ID);
   if (!logChannel) return;
   
-  console.log(`📋 LOGGING CERTAIN MINOR: ${ageCheck.reason}`);
+  console.log(`📋 LOGGING MINOR: ${check.reason}`);
   
   const embed = new EmbedBuilder()
     .setColor('#FF0000')
@@ -202,7 +218,7 @@ async function logMinorDetection(msg, ageCheck) {
     })
     .setDescription(`**Message:**\n\`\`\`${msg.content.substring(0, 1000)}\`\`\``)
     .addFields(
-      { name: 'Reason', value: ageCheck.reason, inline: false },
+      { name: 'Reason', value: check.reason, inline: false },
       { name: 'User ID', value: `\`${msg.author.id}\``, inline: true },
       { name: 'Channel', value: `<#${msg.channel.id}>`, inline: true }
     )
