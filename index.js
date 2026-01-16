@@ -18,6 +18,20 @@ function getCurrentTime() {
   });
 }
 
+function getFormattedTimestamp() {
+  const now = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  
+  const isYesterday = now.getDate() === yesterday.getDate() + 1;
+  
+  if (isYesterday) {
+    return `Yesterday at ${getCurrentTime()}`;
+  } else {
+    return `Today at ${getCurrentTime()}`;
+  }
+}
+
 // ==================== MINOR DETECTION ====================
 function detectMinor(text) {
   if (!text || typeof text !== 'string') return null;
@@ -37,7 +51,7 @@ function detectMinor(text) {
       if (realAge >= 1 && realAge <= 17) {
         return { 
           age: realAge, 
-          reason: `Swapped number detected (${swapped} = ${realAge} years old)` 
+          reason: 'underage' 
         };
       }
     }
@@ -59,7 +73,7 @@ function detectMinor(text) {
     if (realAge >= 1 && realAge <= 17) {
       return { 
         age: realAge, 
-        reason: `Swapped number with reverse emoji detected (${swappedAge} = ${realAge} years old)` 
+        reason: 'underage' 
       };
     }
   }
@@ -79,7 +93,7 @@ function detectMinor(text) {
     if (realAge >= 1 && realAge <= 17) {
       return { 
         age: realAge, 
-        reason: `Reversed keyword detected (${swappedAge} = ${realAge} years old)` 
+        reason: 'underage' 
       };
     }
   }
@@ -91,7 +105,7 @@ function detectMinor(text) {
   if (ageMatch) {
     const age = parseInt(ageMatch[1]);
     if (age >= 1 && age <= 17) {
-      return { age: age, reason: `Minor age ${age} detected` };
+      return { age: age, reason: 'underage' };
     }
   }
   
@@ -101,17 +115,42 @@ function detectMinor(text) {
 // ==================== ATTACHMENT CHECK (FOR SPECIAL CHANNEL ONLY) ====================
 function checkAttachments(attachments) {
   if (!attachments || attachments.size === 0) {
+    console.log('❌ No attachments found');
     return false;
   }
   
-  return Array.from(attachments.values()).some(att => 
-    att.url.includes('cdn.discordapp.com') || 
-    att.url.includes('media.discordapp.net') ||
-    (att.contentType && (
+  const hasValidAttachment = Array.from(attachments.values()).some(att => {
+    // Check Discord URL
+    if (att.url && (
+      att.url.includes('cdn.discordapp.com') || 
+      att.url.includes('media.discordapp.net') ||
+      att.url.includes('images-ext-')
+    )) {
+      return true;
+    }
+    
+    // Check content type
+    if (att.contentType && (
       att.contentType.startsWith('image/') ||
       att.contentType.startsWith('video/')
-    ))
-  );
+    )) {
+      return true;
+    }
+    
+    // Check file extension
+    if (att.name) {
+      const lowerName = att.name.toLowerCase();
+      const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
+      const videoExtensions = ['.mp4', '.mov', '.avi', '.webm', '.mkv'];
+      
+      return imageExtensions.some(ext => lowerName.endsWith(ext)) || 
+             videoExtensions.some(ext => lowerName.endsWith(ext));
+    }
+    
+    return false;
+  });
+  
+  return hasValidAttachment;
 }
 
 // ==================== DISCORD CLIENT ====================
@@ -155,28 +194,29 @@ client.on('messageCreate', async (msg) => {
       // LOG TO BAN CHANNEL ONLY (BOTH CHANNELS)
       const logChannel = msg.guild.channels.cache.get(LOG_CHANNEL_ID);
       if (logChannel) {
+        const timestamp = getFormattedTimestamp();
+        
+        // Create embed in YOUR EXACT FORMAT
         const embed = new EmbedBuilder()
-          .setColor('#FF0000')
-          .setTitle('⚠️ Minor Detected')
-          .setDescription(
-            `**User:** ${msg.author.username} (${msg.author.id})\n` +
-            `**Reason:** ${minorDetection.reason}\n` +
-            `**Channel:** <#${msg.channel.id}>\n` +
-            `**Time:** ${getCurrentTime()}\n\n` +
-            `**Message:**\n${msg.content.substring(0, 500)}\n\n` +
-            `**Action Required:**`
-          )
-          .setTimestamp();
+          .setColor('#2b2d31')
+          .setAuthor({
+            name: `${msg.author.username}`,
+            iconURL: msg.author.displayAvatarURL({ dynamic: true })
+          })
+          .setDescription(`\`\`\`${msg.content}\`\`\``)
+          .setFooter({
+            text: `id: ${msg.author.id} | reason: ${minorDetection.reason} | ${timestamp}`
+          });
         
         const actionRow = new ActionRowBuilder()
           .addComponents(
             new ButtonBuilder()
               .setCustomId(`ban_${msg.author.id}_${msg.id}`)
-              .setLabel('Ban User')
+              .setLabel('banna')
               .setStyle(ButtonStyle.Danger),
             new ButtonBuilder()
-              .setCustomId(`ignore_${msg.author.id}_${msg.id}`)
-              .setLabel('Ignore')
+              .setCustomId(`ignora_${msg.author.id}_${msg.id}`)
+              .setLabel('ignora')
               .setStyle(ButtonStyle.Secondary)
           );
         
@@ -214,7 +254,7 @@ client.on('interactionCreate', async (interaction) => {
   if (!interaction.isButton()) return;
   
   const [action, userId, messageId] = interaction.customId.split('_');
-  const time = getCurrentTime();
+  const timestamp = getFormattedTimestamp();
   
   if (!interaction.guild) {
     return interaction.reply({ 
@@ -226,7 +266,7 @@ client.on('interactionCreate', async (interaction) => {
   await interaction.deferReply({ ephemeral: true });
   
   try {
-    if (action === 'ban') {
+    if (action === 'ban' || action === 'banna') {
       const member = await interaction.guild.members.fetch(userId).catch(() => null);
       
       if (member) {
@@ -236,8 +276,10 @@ client.on('interactionCreate', async (interaction) => {
         
         // Update log message
         const embed = EmbedBuilder.from(interaction.message.embeds[0])
-          .setColor('#990000')
-          .setFooter({ text: `Banned by @${interaction.user.username} • ${time}` });
+          .setColor('#2b2d31')
+          .setFooter({ 
+            text: `id: ${userId} | reason: underage | ${timestamp} • bannato da @${interaction.user.username}` 
+          });
         
         await interaction.message.edit({ 
           embeds: [embed], 
@@ -251,11 +293,13 @@ client.on('interactionCreate', async (interaction) => {
         console.log(`🔨 Banned ${member.user.tag}`);
       }
     }
-    else if (action === 'ignore') {
+    else if (action === 'ignore' || action === 'ignora') {
       // Update log message
       const embed = EmbedBuilder.from(interaction.message.embeds[0])
-        .setColor('#666666')
-        .setFooter({ text: `Ignored by @${interaction.user.username} • ${time}` });
+        .setColor('#2b2d31')
+        .setFooter({ 
+          text: `id: ${userId} | reason: underage | ${timestamp} • ignorato da @${interaction.user.username}` 
+        });
       
       await interaction.message.edit({ 
         embeds: [embed], 
