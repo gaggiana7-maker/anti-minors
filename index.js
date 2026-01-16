@@ -24,22 +24,22 @@ let currentKeyIndex = 0;
 function getCurrentKey() { return API_KEYS[currentKeyIndex]; }
 function rotateKey() { currentKeyIndex = (currentKeyIndex + 1) % API_KEYS.length; }
 
-async function askAI(question) {
+async function askAI(prompt) {
   for (let attempt = 0; attempt < API_KEYS.length * 2; attempt++) {
     try {
       const groq = new Groq({ apiKey: getCurrentKey() });
       const response = await groq.chat.completions.create({
-        messages: [{ role: "user", content: question }],
+        messages: [{ role: "user", content: prompt }],
         model: "llama-3.3-70b-versatile",
         temperature: 0.1,
-        max_tokens: 150,
+        max_tokens: 200,
         response_format: { type: "json_object" }
       });
       
       return JSON.parse(response.choices[0].message.content);
       
     } catch (error) {
-      console.log(`❌ Key ${currentKeyIndex} failed, trying next...`);
+      console.log(`❌ Key ${currentKeyIndex} failed`);
       rotateKey();
       await new Promise(resolve => setTimeout(resolve, 300));
     }
@@ -47,30 +47,72 @@ async function askAI(question) {
   return { is_minor: false, confidence: 'low', reason: 'AI failed' };
 }
 
-// ==================== SMART AGE CHECK ====================
-async function checkAge(messageText) {
-  const text = messageText.toLowerCase();
+// ==================== REVERSED CODE DETECTION ====================
+function isReversedAgeCode(text) {
+  const lower = text.toLowerCase();
   
-  // AUTO-MINOR: Reversed age codes (100% certain)
-  if (/(41|51|61|71).*(reversed|swap|🔄|🔃|↩|↪)/.test(text) || 
-      /(reversed|swap|🔄|🔃|↩|↪).*(41|51|61|71)/.test(text)) {
-    console.log(`🚨 CERTAIN MINOR: Reversed age code`);
-    return { is_minor: true, confidence: 'high', reason: 'Reversed age code detected' };
+  // Check for reversed codes with indicators
+  const patterns = [
+    /(41|51|61|71).*(reversed|swap|🔄|🔃|↩|↪|inverted|flipped)/i,
+    /(reversed|swap|🔄|🔃|↩|↪|inverted|flipped).*(41|51|61|71)/i,
+    /\((?:reversed|swap).*age\)/i,
+    /reversed.*age/i,
+    /swap.*age/i,
+    /age.*reversed/i,
+    /age.*swap/i
+  ];
+  
+  for (const pattern of patterns) {
+    if (pattern.test(lower)) {
+      const match = lower.match(/(41|51|61|71)/);
+      if (match) {
+        const code = match[1];
+        const realAge = { '41': 14, '51': 15, '61': 16, '71': 17 }[code];
+        return {
+          detected: true,
+          code: code,
+          realAge: realAge,
+          reason: `Reversed code ${code} = ${realAge} years old`
+        };
+      }
+    }
   }
   
-  // AUTO-ADULT: "18" anywhere (100% certain adult)
-  if (/\b18\b/.test(text) && !/41|51|61|71/.test(text)) {
+  return { detected: false };
+}
+
+// ==================== AGE CHECK ====================
+async function checkAge(messageText) {
+  // 1. CHECK FOR REVERSED CODES FIRST (100% certain)
+  const reversedCheck = isReversedAgeCode(messageText);
+  if (reversedCheck.detected) {
+    console.log(`🚨 CERTAIN MINOR: ${reversedCheck.reason}`);
+    return { is_minor: true, confidence: 'high', reason: reversedCheck.reason };
+  }
+  
+  // 2. CHECK FOR "18" (100% certain adult)
+  if (/\b18\b/i.test(messageText)) {
     console.log(`✅ CERTAIN ADULT: Contains "18"`);
     return { is_minor: false, confidence: 'high', reason: 'Age 18 mentioned' };
   }
   
-  // Ask AI for detailed analysis
-  const response = await askAI(`{
-    "system": "Analyze if this user mentions being under 18. Return JSON: {is_minor: boolean, confidence: 'high/medium/low', reason: 'explanation'}",
-    "user": "Message: ${messageText.substring(0, 300)}"
-  }`);
+  // 3. ASK AI FOR EVERYTHING ELSE
+  const prompt = `Analyze: "${messageText}"
   
-  return response;
+  Is the user mentioning being UNDER 18 years old?
+  
+  Rules:
+  1. "41 reversed", "51 swap", "61 🔄", "71 🔃" = UNDER 18 (already caught)
+  2. "18", "19", "20+" = 18+ (adult)
+  3. "15", "16", "17" = UNDER 18
+  4. No age mentioned = NOT minor (just delete, don't log)
+  
+  Return JSON: {is_minor: boolean, confidence: 'high/medium/low', reason: 'brief explanation'}
+  
+  Only mark as minor (is_minor: true) if CERTAIN about age under 18.`;
+  
+  const result = await askAI(prompt);
+  return result;
 }
 
 // ==================== ATTACHMENT CHECK ====================
@@ -93,7 +135,7 @@ const client = new Client({
 
 client.once('ready', () => {
   console.log(`✅ Bot Online: ${client.user.tag}`);
-  client.user.setActivity('Age Verification', { type: 'WATCHING' });
+  client.user.setActivity('Age Check', { type: 'WATCHING' });
 });
 
 // ==================== MESSAGE HANDLER ====================
@@ -101,34 +143,32 @@ client.on('messageCreate', async (msg) => {
   if (msg.author.bot) return;
   if (!msg.guild || msg.guild.id !== SERVER_ID) return;
   
-  // Skip very short messages
+  // Skip very short
   if (!msg.content || msg.content.trim().length < 2) return;
   
   try {
     const isSpecialChannel = msg.channel.id === SPECIAL_CHANNEL_ID;
     
-    // ========== SPECIAL CHANNEL ==========
-    if (isSpecialChannel) {
-      if (!hasAttachment(msg.attachments)) {
-        await msg.delete();
-        return;
-      }
+    // SPECIAL CHANNEL: Needs attachment
+    if (isSpecialChannel && !hasAttachment(msg.attachments)) {
+      await msg.delete();
+      return;
     }
     
-    // ========== AGE CHECK ==========
+    // CHECK AGE
     const ageCheck = await checkAge(msg.content);
-    console.log(`🤖 "${msg.content.substring(0, 30)}..." → Minor: ${ageCheck.is_minor}, Confidence: ${ageCheck.confidence}`);
+    console.log(`🤖 "${msg.content.substring(0, 40)}..." → Minor: ${ageCheck.is_minor}, Conf: ${ageCheck.confidence}`);
     
     if (ageCheck.is_minor && ageCheck.confidence === 'high') {
       // CERTAIN MINOR → Delete + Log
       await msg.delete();
       await logMinorDetection(msg, ageCheck);
-    } else if (!ageCheck.is_minor) {
-      // NOT MINOR → Message stays
-    } else {
-      // Unsure/low confidence → Delete but DON'T log
+    } else if (ageCheck.is_minor && ageCheck.confidence !== 'high') {
+      // UNCERTAIN MINOR → Delete only, NO LOG
       await msg.delete();
-      console.log('🗑️ Deleted (unsure), not logging');
+      console.log('🗑️ Deleted (uncertain), not logging');
+    } else {
+      // NOT MINOR → Message stays
     }
     
   } catch (error) {
@@ -138,38 +178,32 @@ client.on('messageCreate', async (msg) => {
 
 // ==================== LOGGING - ONLY CERTAIN MINORS ====================
 async function logMinorDetection(msg, ageCheck) {
-  // ONLY log HIGH confidence minors
-  if (ageCheck.confidence !== 'high') {
-    console.log('⚠️ Not logging: Low confidence detection');
+  // ONLY log HIGH confidence, CERTAIN minors
+  if (ageCheck.confidence !== 'high' || !ageCheck.is_minor) {
     return;
   }
   
-  // Don't log empty/short messages
+  // Don't log short messages
   if (!msg.content || msg.content.trim().length < 5) {
-    console.log('⚠️ Not logging: Message too short');
     return;
   }
   
   const logChannel = client.channels.cache.get(LOG_CHANNEL_ID);
-  if (!logChannel) {
-    console.error('❌ Log channel not found');
-    return;
-  }
+  if (!logChannel) return;
   
   console.log(`📋 LOGGING CERTAIN MINOR: ${ageCheck.reason}`);
   
   const embed = new EmbedBuilder()
     .setColor('#FF0000')
-    .setTitle('🚨 CERTAIN MINOR DETECTED')
+    .setTitle('🚨 MINOR DETECTED')
     .setAuthor({
       name: msg.author.tag,
       iconURL: msg.author.displayAvatarURL({ dynamic: true })
     })
-    .setDescription(`**Message:**\n\`\`\`${msg.content.substring(0, 800)}\`\`\``)
+    .setDescription(`**Message:**\n\`\`\`${msg.content.substring(0, 1000)}\`\`\``)
     .addFields(
-      { name: 'Confidence', value: '✅ HIGH', inline: true },
-      { name: 'Reason', value: ageCheck.reason || 'Underage detected', inline: true },
-      { name: 'User ID', value: `\`${msg.author.id}\``, inline: false },
+      { name: 'Reason', value: ageCheck.reason, inline: false },
+      { name: 'User ID', value: `\`${msg.author.id}\``, inline: true },
       { name: 'Channel', value: `<#${msg.channel.id}>`, inline: true }
     )
     .setTimestamp();
@@ -200,28 +234,25 @@ client.on('interactionCreate', async (interaction) => {
   try {
     if (action === 'ban') {
       const member = await interaction.guild.members.fetch(userId).catch(() => null);
-      
       if (member) {
-        await member.ban({ reason: `Certain minor - banned by ${interaction.user.tag}` });
+        await member.ban({ reason: `Minor - banned by ${interaction.user.tag}` });
         
         const embed = EmbedBuilder.from(interaction.message.embeds[0])
-          .setColor('#FF0000')
-          .setFooter({ text: `✅ Banned by ${interaction.user.tag}` });
+          .setFooter({ text: `Banned by ${interaction.user.tag}` });
         
         await interaction.message.edit({ embeds: [embed], components: [] });
-        await interaction.editReply({ content: '✅ User has been banned.' });
+        await interaction.editReply({ content: '✅ Banned' });
       }
     }
     else if (action === 'ignore') {
       const embed = EmbedBuilder.from(interaction.message.embeds[0])
-        .setColor('#808080')
-        .setFooter({ text: `✅ Ignored by ${interaction.user.tag}` });
+        .setFooter({ text: `Ignored by ${interaction.user.tag}` });
       
       await interaction.message.edit({ embeds: [embed], components: [] });
-      await interaction.editReply({ content: '✅ Report ignored.' });
+      await interaction.editReply({ content: '✅ Ignored' });
     }
   } catch (error) {
-    await interaction.editReply({ content: '❌ An error occurred.' });
+    await interaction.editReply({ content: '❌ Error' });
   }
 });
 
@@ -237,11 +268,11 @@ app.get('/', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🌐 Server running on port ${PORT}`);
+  console.log(`🌐 Server on port ${PORT}`);
 });
 
 // ==================== LOGIN ====================
-console.log('🔑 Logging in to Discord...');
+console.log('🔑 Logging in...');
 client.login(process.env.BOT_TOKEN).catch(err => {
   console.error('❌ Login failed:', err.message);
   process.exit(1);
