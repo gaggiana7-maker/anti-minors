@@ -36,7 +36,7 @@ async function askAI(question) {
       });
       
       const answer = response.choices[0].message.content.trim().toUpperCase();
-      return answer.includes('YES') ? 'YES' : 'NO';
+      return answer;
       
     } catch (error) {
       console.log(`❌ Key ${currentKeyIndex} failed, trying next...`);
@@ -44,73 +44,38 @@ async function askAI(question) {
       await new Promise(resolve => setTimeout(resolve, 300));
     }
   }
-  return 'NO'; // If all keys fail, delete message
+  return 'NO';
 }
 
-// ==================== QUICK REVERSED NUMBER CHECK ====================
-function checkForReversedAgeCodes(text) {
-  const lowerText = text.toLowerCase();
-  
-  // Patterns for reversed age codes
-  const reversedPatterns = [
-    /(41|51|61|71)\s*(reversed|swap|swapped|inverted|flipped|🔄|🔃|↩️|↪️|↔️)/i,
-    /(reversed|swap|swapped|inverted|flipped|🔄|🔃|↩️|↪️|↔️)\s*(41|51|61|71)/i,
-    /(14|15|16|17)\s*(reversed|swap|swapped|inverted|flipped|🔄|🔃|↩️|↪️|↔️)/i,
-    /(reversed|swap|swapped|inverted|flipped|🔄|🔃|↩️|↪️|↔️)\s*(14|15|16|17)/i
-  ];
-  
-  for (const pattern of reversedPatterns) {
-    if (pattern.test(lowerText)) {
-      const match = lowerText.match(pattern);
-      const number = match[1] || match[2];
-      
-      // Determine actual age
-      let actualAge;
-      switch (number) {
-        case '41': case '14': actualAge = 14; break;
-        case '51': case '15': actualAge = 15; break;
-        case '61': case '16': actualAge = 16; break;
-        case '71': case '17': actualAge = 17; break;
-        default: actualAge = null;
-      }
-      
-      console.log(`🔄 Detected reversed code: ${number} → ${actualAge} years old`);
-      return {
-        detected: true,
-        code: number,
-        actualAge: actualAge,
-        reason: 'Reversed age code detected'
-      };
-    }
-  }
-  
-  return { detected: false };
-}
-
-// ==================== AGE CHECK FUNCTION ====================
+// ==================== SMART AGE CHECK ====================
 async function isUser18Plus(messageText) {
-  // FIRST: Check for reversed age codes (FAST CHECK)
-  const reversedCheck = checkForReversedAgeCodes(messageText);
-  if (reversedCheck.detected) {
-    console.log(`🚨 Auto-flag: Reversed code ${reversedCheck.code} detected → MINOR`);
-    return 'NO'; // Always flag as minor
+  const text = messageText.toLowerCase();
+  
+  // AUTO-YES: Any "18" that's NOT part of reversed code
+  if (/\b18\b/.test(text) && !/41|51|61|71/.test(text)) {
+    console.log(`✅ AUTO-APPROVED: Contains "18"`);
+    return 'YES';
   }
   
-  // SECOND: Ask AI for other cases
+  // AUTO-NO: Reversed age codes
+  if (/(41|51|61|71).*(reversed|swap|🔄|🔃|↩|↪)/.test(text) || 
+      /(reversed|swap|🔄|🔃|↩|↪).*(41|51|61|71)/.test(text)) {
+    console.log(`🚨 AUTO-REJECTED: Reversed age code`);
+    return 'NO';
+  }
+  
+  // Ask AI for everything else
   const prompt = `Message: "${messageText.substring(0, 300)}"
   
-  Question: Is the user mentioning they are 18 years old or OLDER?
+  Question: Does the user mention being 18 years old or OLDER?
   
-  IMPORTANT: "41 reversed", "51 swap", "61 🔄", "71 🔃" → These mean 14, 15, 16, 17 → ANSWER: NO
-  
-  Examples:
-  - "18top", "23m", "25f" → YES
-  - "15", "16yo", "41 reversed" → NO
-  - "hello", "my dick is 20cm" → NO
+  Examples YES: "19m", "20f", "23", "25yo", "I'm 30", "22 years old"
+  Examples NO: "15", "16", "17", "u18", "under 18", "hello"
   
   Answer ONLY: YES or NO`;
   
-  return await askAI(prompt);
+  const response = await askAI(prompt);
+  return response.includes('YES') ? 'YES' : 'NO';
 }
 
 // ==================== ATTACHMENT CHECK ====================
@@ -141,37 +106,36 @@ client.on('messageCreate', async (msg) => {
   if (msg.author.bot) return;
   if (!msg.guild || msg.guild.id !== SERVER_ID) return;
   
+  // Skip empty messages
+  if (!msg.content || msg.content.trim().length < 2) return;
+  
   try {
     const isSpecialChannel = msg.channel.id === SPECIAL_CHANNEL_ID;
     
-    // ========== SPECIAL CHANNEL LOGIC ==========
+    // ========== SPECIAL CHANNEL ==========
     if (isSpecialChannel) {
-      // 1. Check attachment FIRST
       if (!hasAttachment(msg.attachments)) {
         await msg.delete();
-        console.log(`📸 Deleted: No attachment in media channel`);
         return;
       }
       
-      // 2. Check age (includes reversed code check)
       const result = await isUser18Plus(msg.content);
-      console.log(`📸 Media channel: "${msg.content.substring(0, 30)}..." → ${result}`);
+      console.log(`📸 Media: "${msg.content.substring(0, 30)}..." → ${result}`);
       
       if (result === 'NO') {
         await msg.delete();
-        await logMinorDetection(msg, 'MEDIA_CHANNEL');
-        return;
+        await logMinorDetection(msg);
       }
       return;
     }
     
-    // ========== REGULAR CHANNELS LOGIC ==========
+    // ========== REGULAR CHANNELS ==========
     const result = await isUser18Plus(msg.content);
     console.log(`💬 Regular: "${msg.content.substring(0, 30)}..." → ${result}`);
     
     if (result === 'NO') {
       await msg.delete();
-      await logMinorDetection(msg, 'REGULAR_CHANNEL');
+      await logMinorDetection(msg);
     }
     
   } catch (error) {
@@ -179,27 +143,34 @@ client.on('messageCreate', async (msg) => {
   }
 });
 
-// ==================== LOGGING FUNCTION ====================
-async function logMinorDetection(msg, channelType) {
+// ==================== CLEAN LOGGING - ONLY REAL MINORS ====================
+async function logMinorDetection(msg) {
+  // DON'T LOG: Empty or very short messages
+  if (!msg.content || msg.content.trim().length < 5) {
+    console.log('⚠️ Not logging: Message too short');
+    return;
+  }
+  
+  // DON'T LOG: Messages that obviously have adult ages
+  const text = msg.content.toLowerCase();
+  if (/\b(?:19|20|21|22|23|24|25|26|27|28|29|3[0-9]|[4-5][0-9])\s*(?:m|f|yo|y\.o|years)\b/.test(text)) {
+    console.log('⚠️ Not logging: Contains clear adult age');
+    return;
+  }
+  
+  // DON'T LOG: Just URLs/emojis
+  if (/^(?:http|www|:\/\/|[\p{Emoji}]|\s)+$/iu.test(msg.content.trim())) {
+    console.log('⚠️ Not logging: Just URLs/emojis');
+    return;
+  }
+  
   const logChannel = client.channels.cache.get(LOG_CHANNEL_ID);
   if (!logChannel) {
     console.error('❌ Log channel not found');
     return;
   }
   
-  // Only log meaningful content
-  if (!msg.content || msg.content.trim().length < 3) {
-    console.log('⚠️ Skipping log: Message too short');
-    return;
-  }
-  
-  console.log(`📋 Logging to moderation channel`);
-  
-  // Check if it was a reversed code detection
-  const reversedCheck = checkForReversedAgeCodes(msg.content);
-  const detectionNote = reversedCheck.detected 
-    ? `(Reversed code ${reversedCheck.code} = ${reversedCheck.actualAge} years)` 
-    : '';
+  console.log(`📋 Logging actual minor detection`);
   
   const embed = new EmbedBuilder()
     .setColor('#FF0000')
@@ -208,11 +179,10 @@ async function logMinorDetection(msg, channelType) {
       name: msg.author.tag,
       iconURL: msg.author.displayAvatarURL({ dynamic: true })
     })
-    .setDescription(`**Message:**\n\`\`\`${msg.content.substring(0, 1000)}\`\`\``)
+    .setDescription(`**Message:**\n\`\`\`${msg.content.substring(0, 800)}\`\`\``)
     .addFields(
       { name: 'User ID', value: `\`${msg.author.id}\``, inline: true },
-      { name: 'Channel', value: `<#${msg.channel.id}>`, inline: true },
-      { name: 'Detection', value: `${channelType} ${detectionNote}`, inline: true }
+      { name: 'Channel', value: `<#${msg.channel.id}>`, inline: true }
     )
     .setTimestamp();
   
