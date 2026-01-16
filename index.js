@@ -24,77 +24,74 @@ function detectMinor(text) {
   
   const lowercase = text.toLowerCase();
   
-  // PATTERN 1: "REVERSED" OR SWAP EMOJIS (MEANS UNDER 18)
-  const reversedPatterns = [
-    /\breversed\b/i,
-    /🔃|🔄|↩️|↪️|🔄️/, // Swap/Reverse emojis
-    /\bswap\b/i,
-    /\bother way around\b/i,
-    /\bu18\b/i,
-    /\bu18\s*🔃/i,
-    /\bu18\s*🔄/i,
-  ];
+  // PATTERN 1: SWAPPED/REVERSED NUMBERS = MINOR
+  // 51 = 15, 61 = 16, 71 = 17, etc.
+  const swappedNumbers = ['51', '61', '71', '52', '62', '72', '53', '63', '73', '54', '64', '74', '55', '65', '75', '56', '66', '76', '57', '67', '77'];
   
-  for (const pattern of reversedPatterns) {
+  for (const swapped of swappedNumbers) {
+    const pattern = new RegExp(`\\b${swapped}\\b`, 'i');
     if (pattern.test(lowercase)) {
-      return { age: 'reversed', reason: 'Reversed/swap detected (under 18)' };
-    }
-  }
-  
-  // PATTERN 2: ANY NUMBER 1-17 MENTIONED
-  const agePatterns = [
-    // Simple numbers 1-17
-    /\b(1[0-7]|[1-9])\b/,
-    
-    // With gender: "17m", "16f", "15 male"
-    /\b(1[0-7]|[1-9])\s*(m|f|male|female)\b/i,
-    
-    // With age indicator: "17yo", "16 years"
-    /\b(1[0-7]|[1-9])\s*(yo|y\.o\.|years?|yrs?|y\/o)\b/i,
-    
-    // Looking for/chatting with age: "looking for 17", "chat 16"
-    /\b(?:looking|searching|seeking|want|need|for|find|meet|chat|talk|dm|dms|hmu|cam|wanna)\s+(1[0-7]|[1-9])\b/i,
-    
-    // Age ranges: "17+", "16+"
-    /\b(1[0-7]|[1-9])\s*\+/,
-    
-    // M61🔄, M71🔃 patterns
-    /[mf]\s*(1[0-7]|[1-9])\s*[🔃🔄↩️↪️]/i,
-    /(1[0-7]|[1-9])\s*[🔃🔄↩️↪️]/i,
-    
-    // "51 reversed", "61 🔄" etc
-    /\b(\d{1,2})\s*(?:reversed|swap|🔃|🔄|↩️|↪️)\b/i,
-    /\b(?:reversed|swap|🔃|🔄|↩️|↪️)\s*(\d{1,2})\b/i,
-  ];
-  
-  for (const pattern of agePatterns) {
-    const match = lowercase.match(pattern);
-    if (match) {
-      // Find the number in match
-      for (const group of match) {
-        if (group && /^\d+$/.test(group)) {
-          const age = parseInt(group);
-          if (age >= 1 && age <= 17) {
-            return { age: age, reason: `Minor age ${age} detected` };
-          }
-        }
+      const swappedAge = parseInt(swapped);
+      const realAge = parseInt(swapped.toString().split('').reverse().join(''));
+      
+      if (realAge >= 1 && realAge <= 17) {
+        return { 
+          age: realAge, 
+          reason: `Swapped number detected (${swapped} = ${realAge} years old)` 
+        };
       }
     }
   }
   
-  // PATTERN 3: SPECIFIC MINOR PHRASES
-  const minorPhrases = [
-    /\bu18 looking/i,
-    /\bunder 18/i,
-    /\bunderage/i,
-    /\bminor\b/i,
-    /\bhigh school\b/i,
-    /\bhs\b/i,
-  ];
+  // PATTERN 2: SWAPPED NUMBER WITH REVERSE EMOJIS
+  const swappedEmojiPattern = /(51|61|71|15|16|17)\s*[🔃🔄↩️↪️]/;
+  const swappedEmojiMatch = lowercase.match(swappedEmojiPattern);
   
-  for (const phrase of minorPhrases) {
-    if (phrase.test(lowercase)) {
-      return { age: 'phrase', reason: 'Minor phrase detected' };
+  if (swappedEmojiMatch) {
+    const swappedAge = parseInt(swappedEmojiMatch[1]);
+    let realAge = swappedAge;
+    
+    // If it's 51/61/71, reverse it
+    if (swappedAge > 50) {
+      realAge = parseInt(swappedAge.toString().split('').reverse().join(''));
+    }
+    
+    if (realAge >= 1 && realAge <= 17) {
+      return { 
+        age: realAge, 
+        reason: `Swapped number with reverse emoji detected (${swappedAge} = ${realAge} years old)` 
+      };
+    }
+  }
+  
+  // PATTERN 3: "REVERSED" KEYWORD WITH NUMBER
+  const reversedKeywordPattern = /\b(51|61|71|15|16|17)\s*(?:reversed|swap)\b/i;
+  const reversedKeywordMatch = lowercase.match(reversedKeywordPattern);
+  
+  if (reversedKeywordMatch) {
+    const swappedAge = parseInt(reversedKeywordMatch[1]);
+    let realAge = swappedAge;
+    
+    if (swappedAge > 50) {
+      realAge = parseInt(swappedAge.toString().split('').reverse().join(''));
+    }
+    
+    if (realAge >= 1 && realAge <= 17) {
+      return { 
+        age: realAge, 
+        reason: `Reversed keyword detected (${swappedAge} = ${realAge} years old)` 
+      };
+    }
+  }
+  
+  // PATTERN 4: DIRECT MINOR AGE 1-17
+  const minorAgePattern = /\b(1[0-7]|[1-9])\b/;
+  const ageMatch = lowercase.match(minorAgePattern);
+  
+  if (ageMatch) {
+    const age = parseInt(ageMatch[1]);
+    if (age >= 1 && age <= 17) {
+      return { age: age, reason: `Minor age ${age} detected` };
     }
   }
   
