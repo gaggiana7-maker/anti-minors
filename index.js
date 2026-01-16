@@ -2,7 +2,7 @@ const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder
 const express = require('express');
 const Groq = require("groq-sdk");
 
-console.log('🚀 Age Bot Starting...');
+console.log('🚀 Pure AI Bot Starting...');
 
 // ==================== CONFIG ====================
 const SERVER_ID = '1447204367089270874';
@@ -32,10 +32,12 @@ async function askAI(question) {
         messages: [{ role: "user", content: question }],
         model: "llama-3.3-70b-versatile",
         temperature: 0.1,
-        max_tokens: 100
+        max_tokens: 200,
+        response_format: { type: "json_object" }
       });
       
-      return response.choices[0].message.content;
+      const result = JSON.parse(response.choices[0].message.content);
+      return result;
       
     } catch (e) {
       console.log(`Key ${keyIndex} failed`);
@@ -43,59 +45,31 @@ async function askAI(question) {
       await new Promise(r => setTimeout(r, 300));
     }
   }
-  return 'DELETE'; // If all keys fail, delete
+  return { delete: true, minor: false, reason: 'AI failed' };
 }
 
-// ==================== MINIMAL REGEX CHECKS ====================
-function quickChecks(text) {
-  const lower = text.toLowerCase();
-  
-  // 1. REVERSED CODES (only regex we need)
-  if (/(41|51|61|71).*(reversed|swap|🔄|🔃)/i.test(lower) || 
-      /(reversed|swap|🔄|🔃).*(41|51|61|71)/i.test(lower)) {
-    return { action: 'DELETE_LOG', reason: 'Reversed age code' };
-  }
-  
-  // 2. "18" anywhere = KEEP (simple regex)
-  if (/\b18\b/i.test(text)) {
-    return { action: 'KEEP', reason: 'Age 18' };
-  }
-  
-  return null; // Let AI decide
-}
+// ==================== PURE AI CHECK ====================
+async function analyzeMessage(text) {
+  const prompt = `Analyze this Discord message in an 18+ NSFW server:
 
-// ==================== AI CHECK ====================
-async function checkMessage(text) {
-  // Quick checks first
-  const quick = quickChecks(text);
-  if (quick) return quick;
+"${text}"
+
+Rules:
+1. Message must contain CLEAR mention of being 18 years old or OLDER
+2. If NO age 18+ mentioned → DELETE
+3. If age UNDER 18 mentioned → DELETE + LOG (minor)
+4. Watch for bypass attempts: "41 reversed", "51 swap", coded language
+5. Media channel still needs age 18+
+
+Return JSON:
+{
+  "delete": true/false,
+  "minor": true/false (only true if CERTAIN age < 18),
+  "confidence": "high/medium/low",
+  "reason": "brief explanation"
+}`;
   
-  // Ask AI
-  const response = await askAI(`Message: "${text}"
-  
-  In this NSFW Discord server, should this message be deleted?
-  
-  DELETE if:
-  - No age 18+ mentioned
-  - Age under 18 mentioned
-  - Dating message without age
-  
-  KEEP if:
-  - Age 18+ mentioned (23m, 25f, etc.)
-  - Not a dating message
-  
-  Answer: DELETE or KEEP`);
-  
-  const answer = response.trim().toUpperCase();
-  
-  if (answer.includes('DELETE')) {
-    return { action: 'DELETE', reason: 'AI: ' + answer };
-  } else if (answer.includes('KEEP')) {
-    return { action: 'KEEP', reason: 'AI: ' + answer };
-  } else {
-    // If AI confused, delete to be safe
-    return { action: 'DELETE', reason: 'AI uncertain' };
-  }
+  return await askAI(prompt);
 }
 
 // ==================== DISCORD ====================
@@ -105,7 +79,7 @@ const client = new Client({
 
 client.once('ready', () => {
   console.log(`✅ ${client.user.tag} ready`);
-  client.user.setActivity('Age Check', { type: 'WATCHING' });
+  client.user.setActivity('AI Age Check', { type: 'WATCHING' });
 });
 
 // ==================== MESSAGE HANDLER ====================
@@ -115,8 +89,10 @@ client.on('messageCreate', async (msg) => {
   if (!msg.content || msg.content.trim().length < 2) return;
   
   try {
-    // Special channel needs attachment
-    if (msg.channel.id === SPECIAL_CHANNEL_ID) {
+    const isSpecialChannel = msg.channel.id === SPECIAL_CHANNEL_ID;
+    
+    // Special channel: Check for ANY attachment
+    if (isSpecialChannel) {
       const hasFile = msg.attachments?.size > 0;
       if (!hasFile) {
         await msg.delete();
@@ -124,17 +100,18 @@ client.on('messageCreate', async (msg) => {
       }
     }
     
-    const result = await checkMessage(msg.content);
-    console.log(`🤖 "${msg.content.substring(0, 30)}..." → ${result.action}`);
+    const analysis = await analyzeMessage(msg.content);
+    console.log(`🤖 "${msg.content.substring(0, 30)}..." → Delete: ${analysis.delete}, Minor: ${analysis.minor}, Conf: ${analysis.confidence}`);
     
-    if (result.action === 'DELETE' || result.action === 'DELETE_LOG') {
+    if (analysis.delete) {
       await msg.delete();
       
-      if (result.action === 'DELETE_LOG') {
-        await logMinor(msg, result.reason);
+      // ONLY LOG if CERTAIN MINOR with HIGH confidence
+      if (analysis.minor && analysis.confidence === 'high') {
+        await logMinor(msg, analysis);
       }
     }
-    // If KEEP, message stays
+    // If delete = false, message stays
     
   } catch (e) {
     console.error('Error:', e.message);
@@ -142,17 +119,18 @@ client.on('messageCreate', async (msg) => {
 });
 
 // ==================== LOGGING ====================
-async function logMinor(msg, reason) {
+async function logMinor(msg, analysis) {
   const logChannel = client.channels.cache.get(LOG_CHANNEL_ID);
   if (!logChannel) return;
   
   const embed = new EmbedBuilder()
     .setColor('#FF0000')
-    .setTitle('🚨 Minor Detected')
+    .setTitle('🚨 CERTAIN MINOR DETECTED')
     .setAuthor({ name: msg.author.tag, iconURL: msg.author.displayAvatarURL() })
-    .setDescription(`\`\`\`${msg.content.substring(0, 800)}\`\`\``)
+    .setDescription(`**Message:**\n\`\`\`${msg.content.substring(0, 1000)}\`\`\``)
     .addFields(
-      { name: 'Reason', value: reason, inline: true },
+      { name: 'Reason', value: analysis.reason, inline: false },
+      { name: 'Confidence', value: '✅ HIGH', inline: true },
       { name: 'User ID', value: `\`${msg.author.id}\``, inline: true }
     )
     .setTimestamp();
@@ -181,7 +159,7 @@ client.on('interactionCreate', async (interaction) => {
   if (action === 'ban') {
     const member = await interaction.guild.members.fetch(userId).catch(() => null);
     if (member) {
-      await member.ban({ reason: `Minor - by ${interaction.user.tag}` });
+      await member.ban({ reason: `Certain minor - by ${interaction.user.tag}` });
       await interaction.editReply({ content: '✅ Banned' });
     }
   } else if (action === 'ignore') {
