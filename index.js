@@ -2,205 +2,170 @@ const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder
 const express = require('express');
 const Groq = require("groq-sdk");
 
-console.log('🚀 Discord AI Bot Starting...');
+console.log('🚀 FINAL Age Check Bot Starting...');
 
 // ==================== CONFIGURATION ====================
 const SERVER_ID = '1447204367089270874';
 const LOG_CHANNEL_ID = '1461799833890328607';
 const SPECIAL_CHANNEL_ID = '1447208095217619055';
 
-// ==================== GROQ API KEY ROTATION SYSTEM ====================
-class GroqKeyManager {
-  constructor() {
-    // 5 keys totali: 1 attuale + 4 nuove
-    this.keys = [
-      process.env.GROQ_KEY_1,  // Key attualmente in uso
-      process.env.GROQ_KEY_2,  // Nuova key 1
-      process.env.GROQ_KEY_3,  // Nuova key 2
-      process.env.GROQ_KEY_4,  // Nuova key 3
-      process.env.GROQ_KEY_5   // Nuova key 4
-    ].filter(key => key && key.trim() !== '');
+// ==================== 5 API KEYS ROTATION ====================
+const API_KEYS = [
+  process.env.GROQ_API_KEY,
+  process.env.GROQ_KEY_2,
+  process.env.GROQ_KEY_3,
+  process.env.GROQ_KEY_4,
+  process.env.GROQ_KEY_5
+].filter(key => key && key.trim() !== '');
+
+console.log(`🔑 Loaded ${API_KEYS.length} API keys`);
+if (API_KEYS.length === 0) {
+  console.error('❌ ERROR: No API keys found! Check environment variables.');
+}
+
+let currentKeyIndex = 0;
+const keyStats = {};
+
+function getCurrentKey() { 
+  return API_KEYS[currentKeyIndex]; 
+}
+
+function rotateKey() {
+  const oldIndex = currentKeyIndex;
+  currentKeyIndex = (currentKeyIndex + 1) % API_KEYS.length;
+  console.log(`🔄 Rotated: Key ${oldIndex} → Key ${currentKeyIndex}`);
+  return getCurrentKey();
+}
+
+async function callAIWithRetry(prompt, functionName = "AI Call") {
+  for (let attempt = 0; attempt < API_KEYS.length * 2; attempt++) {
+    const keyIndex = currentKeyIndex;
+    const key = getCurrentKey();
     
-    console.log(`🔑 Loaded ${this.keys.length} API keys`);
+    console.log(`🔑 [${functionName}] Attempt ${attempt + 1} with Key ${keyIndex}`);
     
-    this.currentIndex = 0;
-    this.failures = {};
-    this.cooldowns = {};
-    this.requestsCount = {};
-    this.maxFailures = 3;
-    this.cooldownTime = 5 * 60 * 1000; // 5 minuti
-    
-    // Inizializza contatori
-    this.keys.forEach((_, i) => {
-      this.requestsCount[i] = 0;
-    });
-    
-    // Log delle keys (primi e ultimi caratteri per sicurezza)
-    this.keys.forEach((key, i) => {
-      const masked = key ? `${key.substring(0, 10)}...${key.substring(key.length - 5)}` : 'MISSING';
-      console.log(`  Key ${i}: ${masked}`);
-    });
-  }
-  
-  getCurrentKey() {
-    return this.keys[this.currentIndex];
-  }
-  
-  rotateKey() {
-    const oldIndex = this.currentIndex;
-    let attempts = 0;
-    
-    // Prova tutte le keys fino a trovarne una disponibile
-    while (attempts < this.keys.length) {
-      this.currentIndex = (this.currentIndex + 1) % this.keys.length;
-      attempts++;
+    try {
+      // Track usage
+      if (!keyStats[keyIndex]) keyStats[keyIndex] = { requests: 0, successes: 0, failures: 0 };
+      keyStats[keyIndex].requests++;
       
-      if (this.isKeyAvailable(this.currentIndex)) {
-        console.log(`🔄 Rotated: ${oldIndex} → ${this.currentIndex}`);
-        return this.getCurrentKey();
-      }
-    }
-    
-    // Se nessuna disponibile, resetta failures e usa la prossima
-    console.log('🔄 No available keys, resetting failures...');
-    this.failures = {};
-    this.cooldowns = {};
-    this.currentIndex = (oldIndex + 1) % this.keys.length;
-    
-    return this.getCurrentKey();
-  }
-  
-  markFailure(keyIndex) {
-    const key = this.keys[keyIndex];
-    if (!key) return;
-    
-    if (!this.failures[key]) {
-      this.failures[key] = 0;
-    }
-    
-    this.failures[key]++;
-    this.cooldowns[key] = Date.now();
-    
-    console.log(`❌ Key ${keyIndex} failure ${this.failures[key]}/${this.maxFailures}`);
-    
-    if (this.failures[key] >= this.maxFailures) {
-      console.log(`⏸️ Key ${keyIndex} in cooldown for 5 minutes`);
-      setTimeout(() => {
-        delete this.failures[key];
-        delete this.cooldowns[key];
-        console.log(`✅ Key ${keyIndex} cooldown finished`);
-      }, this.cooldownTime);
-    }
-  }
-  
-  markSuccess(keyIndex) {
-    this.requestsCount[keyIndex] = (this.requestsCount[keyIndex] || 0) + 1;
-    
-    const key = this.keys[keyIndex];
-    if (key && this.failures[key]) {
-      delete this.failures[key];
-      delete this.cooldowns[key];
-    }
-  }
-  
-  isKeyAvailable(keyIndex) {
-    const key = this.keys[keyIndex];
-    if (!key) return false;
-    
-    // Check cooldown
-    if (this.cooldowns[key]) {
-      const timeSinceFailure = Date.now() - this.cooldowns[key];
-      return timeSinceFailure > this.cooldownTime;
-    }
-    
-    // Check failure count
-    return !this.failures[key] || this.failures[key] < this.maxFailures;
-  }
-  
-  getKeyStatus(keyIndex) {
-    const key = this.keys[keyIndex];
-    if (!key) return 'MISSING';
-    
-    const isCurrent = keyIndex === this.currentIndex;
-    const failures = this.failures[key] || 0;
-    const requests = this.requestsCount[keyIndex] || 0;
-    const available = this.isKeyAvailable(keyIndex);
-    
-    return {
-      index: keyIndex,
-      isCurrent,
-      available,
-      failures,
-      requests,
-      shortKey: `${key.substring(0, 8)}...${key.substring(key.length - 4)}`
-    };
-  }
-  
-  getAllStatus() {
-    return this.keys.map((_, i) => this.getKeyStatus(i));
-  }
-  
-  async withRetry(apiCall) {
-    const maxRetries = this.keys.length * 2;
-    
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      const keyIndex = this.currentIndex;
-      const key = this.getCurrentKey();
+      const groq = new Groq({ apiKey: key });
+      const completion = await groq.chat.completions.create({
+        messages: [{ role: "user", content: prompt }],
+        model: "llama-3.3-70b-versatile",
+        temperature: 0.1,
+        max_tokens: 150
+      });
       
-      if (!key) {
-        console.log(`❌ Key ${keyIndex} is empty, rotating...`);
-        this.rotateKey();
-        continue;
-      }
+      keyStats[keyIndex].successes++;
+      const response = completion.choices[0].message.content.trim();
+      console.log(`✅ Key ${keyIndex} success: ${response.substring(0, 50)}...`);
       
-      if (!this.isKeyAvailable(keyIndex)) {
-        console.log(`⏭️ Key ${keyIndex} not available, rotating...`);
-        this.rotateKey();
-        continue;
-      }
+      return response;
       
-      try {
-        console.log(`🔑 Using key ${keyIndex} (attempt ${attempt + 1}/${maxRetries})`);
-        
-        const groq = new Groq({ apiKey: key });
-        const result = await apiCall(groq);
-        
-        this.markSuccess(keyIndex);
-        return result;
-        
-      } catch (error) {
-        console.error(`❌ Key ${keyIndex} failed:`, error.message);
-        this.markFailure(keyIndex);
-        
-        // Rotate to next key
-        this.rotateKey();
-        
-        // Wait before next attempt
-        await new Promise(resolve => 
-          setTimeout(resolve, Math.min(1000 * Math.pow(1.5, attempt), 3000))
-        );
-      }
+    } catch (error) {
+      const errorMsg = error.message || String(error);
+      console.error(`❌ Key ${keyIndex} failed:`, errorMsg.substring(0, 100));
+      
+      if (keyStats[keyIndex]) keyStats[keyIndex].failures++;
+      
+      // Rotate to next key
+      rotateKey();
+      
+      // Small delay before retry
+      await new Promise(resolve => setTimeout(resolve, 300));
     }
+  }
+  
+  throw new Error(`All ${API_KEYS.length} keys failed`);
+}
+
+// ==================== SMART AGE DETECTION ====================
+async function isUser18OrOlder(messageText) {
+  const prompt = `Analyze this Discord message carefully: "${messageText}"
+  
+  YOUR TASK: Determine if the user mentions or implies they are 18 years old or OLDER.
+  
+  THINK STEP BY STEP:
+  1. Look for ALL numbers in the message
+  2. For each number, ask: Could this represent someone's AGE?
+  3. Consider CONTEXT clues:
+     - Numbers with: top/bottom/vers/m/f/male/female → LIKELY AGE
+     - Numbers with: yo/years/anni/old → LIKELY AGE
+     - "I'm X", "I am X", "age X", "età X" → LIKELY AGE
+     - Dating/NSFW context + number → LIKELY AGE
+  
+  4. Context clues for NOT AGE:
+     - Numbers with: cm/inch/eur/$/€ → NOT AGE (size/money)
+     - Quantities: "give me X", "I want X" → NOT AGE
+     - Measurements, prices, counts → NOT AGE
+  
+  CRITICAL RULE: When unsure, assume number 18+ IS AGE (safer to allow than delete wrong).
+  
+  Examples:
+  • "18top looking" → YES (clearly age)
+  • "M23 bottom" → YES (clearly age)
+  • "f25 dom" → YES (clearly age)
+  • "I'm 20" → YES (clearly age)
+  • "19, versatile" → YES (clearly age)
+  • "41 reversed" → NO (means 14)
+  • "15 looking" → NO (under 18)
+  • "my dick is 20cm" → NO (size, not age)
+  • "I want 50€" → NO (money, not age)
+  • "hello" → NO (no age)
+  
+  Final decision for the message above: Answer ONLY with "YES" or "NO"`;
+  
+  try {
+    const response = await callAIWithRetry(prompt, "Age Check");
+    const answer = response.trim().toUpperCase();
     
-    throw new Error(`All ${this.keys.length} API keys exhausted`);
+    // Parse response
+    if (answer.includes('YES') || answer === 'Y') return 'YES';
+    if (answer.includes('NO') || answer === 'N') return 'NO';
+    
+    // If AI gives unclear answer, default to YES (prevent false deletions)
+    console.log(`⚠️ AI unclear response: "${response}", defaulting to YES`);
+    return 'YES';
+    
+  } catch (error) {
+    console.error('❌ Age check failed:', error.message);
+    return 'YES'; // Default to YES on error (safer)
   }
 }
 
-// Initialize key manager
-const keyManager = new GroqKeyManager();
+// ==================== ILLEGAL CONTENT CHECK (Optional) ====================
+async function checkIllegalContent(text) {
+  try {
+    const prompt = `Check for illegal content: "${text.substring(0, 300)}"
+    Return ONLY: "SAFE" or "ILLEGAL"`;
+    
+    const response = await callAIWithRetry(prompt, "Illegal Check");
+    return response.trim().toUpperCase();
+  } catch (error) {
+    console.log('⚠️ Illegal check skipped');
+    return 'SAFE';
+  }
+}
+
+// ==================== ATTACHMENT CHECK ====================
+function hasAttachment(attachments) {
+  if (!attachments || attachments.size === 0) return false;
+  return Array.from(attachments.values()).some(att => 
+    att.contentType?.startsWith('image/') || 
+    att.contentType?.startsWith('video/')
+  );
+}
 
 // ==================== TIME FUNCTIONS ====================
-function getCurrentTime() {
+function getFormattedTimestamp() {
   const now = new Date();
-  return now.toLocaleTimeString('en-US', { 
+  const time = now.toLocaleTimeString('en-US', { 
     hour: '2-digit', 
     minute: '2-digit',
     hour12: false
   });
-}
-
-function getFormattedTimestamp() {
-  return `Today at ${getCurrentTime()}`;
+  return `Today at ${time}`;
 }
 
 // ==================== DISCORD CLIENT ====================
@@ -213,97 +178,18 @@ const client = new Client({
   ]
 });
 
-// ==================== AI FUNCTIONS ====================
-async function analyzeMinorWithAI(text) {
-  return keyManager.withRetry(async (groq) => {
-    const completion = await groq.chat.completions.create({
-      messages: [{
-        role: "system",
-        content: `Analyze if user mentions being under 18. Return JSON: {"is_minor": boolean, "age": number or null, "reason": "short"}`
-      }, {
-        role: "user",
-        content: `Message: ${text.substring(0, 300)}`
-      }],
-      model: "llama3-70b-8192",
-      temperature: 0.1,
-      max_tokens: 100,
-      response_format: { type: "json_object" }
-    });
-    
-    return JSON.parse(completion.choices[0].message.content);
-  });
-}
-
-async function detectIllegalContentWithAI(text) {
-  return keyManager.withRetry(async (groq) => {
-    const completion = await groq.chat.completions.create({
-      messages: [{
-        role: "system",
-        content: `Detect ILLEGAL content. Return JSON: {"is_illegal": boolean, "category": "cp/seller/rape/animal/snuff/invite/none", "confidence": "high/medium/low", "reason": "Italian explanation"}`
-      }, {
-        role: "user",
-        content: `Content: ${text.substring(0, 500)}`
-      }],
-      model: "llama3-70b-8192",
-      temperature: 0.1,
-      max_tokens: 150,
-      response_format: { type: "json_object" }
-    });
-    
-    return JSON.parse(completion.choices[0].message.content);
-  });
-}
-
-// ==================== QUICK CHECK ====================
-function quickCheck(text) {
-  const t = text.toLowerCase();
-  
-  // MINORS
-  if (/(?:^|\s)(?:51|61|71)\s*(?:reversed|swap|🔄|🔃)/.test(t)) {
-    return { type: 'minor', age: 15, reason: 'swapped number' };
-  }
-  if (/\bu18\b/.test(t) || /\bunder\s*18\b/.test(t)) {
-    return { type: 'minor', age: null, reason: 'u18' };
-  }
-  
-  // ADULTS
-  if (/(?:^|\s|,|\.)(1[8-9]|[2-5][0-9])(?:\s|m|f|,|\.|$)/i.test(t)) {
-    return { type: 'adult', age: null, reason: 'adult age' };
-  }
-  
-  return null;
-}
-
-// ==================== ATTACHMENT CHECK ====================
-function checkAttachments(attachments) {
-  if (!attachments || attachments.size === 0) return false;
-  return Array.from(attachments.values()).some(att => 
-    att.url?.includes('cdn.discordapp.com') || 
-    att.contentType?.startsWith('image/') || 
-    att.contentType?.startsWith('video/')
-  );
-}
-
 // ==================== BOT READY ====================
 client.once('ready', () => {
   console.log(`✅ Bot Online: ${client.user.tag}`);
+  console.log(`🔑 Using ${API_KEYS.length} API keys (Current: Key ${currentKeyIndex})`);
   
-  const status = keyManager.getAllStatus();
-  console.log(`🔑 API Keys Status:`);
-  status.forEach(s => {
-    console.log(`  ${s.isCurrent ? '▶️' : '  '} Key ${s.index}: ${s.available ? '✅' : '❌'} (req: ${s.requests}, fails: ${s.failures})`);
+  // Log key statistics
+  Object.keys(keyStats).forEach(index => {
+    const stats = keyStats[index];
+    console.log(`  Key ${index}: Requests ${stats.requests}, ✓ ${stats.successes}, ✗ ${stats.failures}`);
   });
   
-  client.user.setActivity(`${keyManager.keys.length} keys 🔄`, { type: 'WATCHING' });
-  
-  // Log status ogni 10 minuti
-  setInterval(() => {
-    console.log('📊 Key Status Update:');
-    const status = keyManager.getAllStatus();
-    status.forEach(s => {
-      console.log(`  Key ${s.index}: ${s.available ? '🟢' : '🔴'} ${s.isCurrent ? '[ACTIVE]' : ''} Req:${s.requests} Fail:${s.failures}`);
-    });
-  }, 10 * 60 * 1000);
+  client.user.setActivity('Age 18+ Check 🔞', { type: 'WATCHING' });
 });
 
 // ==================== MESSAGE HANDLER ====================
@@ -314,143 +200,113 @@ client.on('messageCreate', async (msg) => {
   try {
     const isSpecialChannel = msg.channel.id === SPECIAL_CHANNEL_ID;
     
-    // SPECIAL CHANNEL: PHOTO/VIDEO REQUIRED
+    // 1. SPECIAL CHANNEL: Photo/Video required
     if (isSpecialChannel) {
-      if (!checkAttachments(msg.attachments)) {
+      if (!hasAttachment(msg.attachments)) {
         await msg.delete();
+        console.log('🗑️ Deleted: No attachment in special channel');
         return;
       }
     }
     
-    // QUICK CHECK
-    const quickResult = quickCheck(msg.content);
-    if (quickResult?.type === 'minor') {
-      await handleMinor(msg, quickResult);
+    // 2. OPTIONAL: Check for illegal content
+    const illegalCheck = await checkIllegalContent(msg.content);
+    if (illegalCheck === 'ILLEGAL') {
+      console.log('🚨 Illegal content detected, deleting...');
+      await handleIllegalContent(msg);
       return;
     }
     
-    // CHECK FOR AGE 18+
-    if (!/(?:^|\s|,|\.)(1[8-9]|[2-5][0-9])(?:\s|m|f|,|\.|$)/i.test(msg.content)) {
+    // 3. MAIN CHECK: Is user 18+?
+    const ageResult = await isUser18OrOlder(msg.content);
+    console.log(`🤖 "${msg.content.substring(0, 50)}..." → ${ageResult}`);
+    
+    if (ageResult === 'YES') {
+      // User is 18+ → Message stays
+      console.log('✅ Kept: User is 18+');
+    } else {
+      // User is under 18 or no age → Delete + Log
       await msg.delete();
-      return;
-    }
-    
-    // ILLEGAL CONTENT CHECK
-    try {
-      const illegalCheck = await detectIllegalContentWithAI(msg.content);
-      if (illegalCheck.is_illegal && illegalCheck.confidence === 'high') {
-        await handleIllegalContent(msg, illegalCheck);
-        return;
-      }
-    } catch (error) {
-      console.error('❌ Illegal check failed:', error.message);
-    }
-    
-    // IF QUICK CHECK SAYS CLEAR ADULT → SKIP AI
-    if (quickResult?.type === 'adult') {
-      return;
-    }
-    
-    // AI MINOR CHECK
-    try {
-      const aiResult = await analyzeMinorWithAI(msg.content);
-      if (aiResult.is_minor) {
-        await handleMinor(msg, aiResult);
-        return;
-      }
-    } catch (error) {
-      console.error('❌ AI minor check failed:', error.message);
+      console.log('🗑️ Deleted: Under 18 or no age');
+      
+      // Log to moderation channel
+      await logMinorDetection(msg, ageResult);
     }
     
   } catch (error) {
     console.error('❌ Error in message handler:', error.message);
+    // On error, delete to be safe
+    try { await msg.delete(); } catch {}
   }
 });
 
-// ==================== HANDLE MINOR ====================
-async function handleMinor(msg, detection) {
-  await msg.delete();
-  
+// ==================== LOG MINOR DETECTION ====================
+async function logMinorDetection(msg, ageResult) {
   const logChannel = msg.guild.channels.cache.get(LOG_CHANNEL_ID);
-  if (logChannel) {
-    const timestamp = getFormattedTimestamp();
-    
-    const embed = new EmbedBuilder()
-      .setColor('#2b2d31')
-      .setAuthor({
-        name: `${msg.author.username}`,
-        iconURL: msg.author.displayAvatarURL({ dynamic: true })
-      })
-      .setDescription(`\`\`\`${msg.content}\`\`\``)
-      .addFields(
-        { name: 'Age Detected', value: detection.age ? `${detection.age}` : 'Unknown', inline: true },
-        { name: 'Detection Method', value: detection.reason || 'AI', inline: true }
-      )
-      .setFooter({
-        text: `id: ${msg.author.id} | underage | ${timestamp}`
-      });
-    
-    const actionRow = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId(`ban_${msg.author.id}_${Date.now()}`)
-          .setLabel('banna')
-          .setStyle(ButtonStyle.Danger),
-        new ButtonBuilder()
-          .setCustomId(`ignore_${msg.author.id}_${Date.now()}`)
-          .setLabel('ignora')
-          .setStyle(ButtonStyle.Secondary)
-      );
-    
-    await logChannel.send({ embeds: [embed], components: [actionRow] });
-  }
+  if (!logChannel) return;
+  
+  const timestamp = getFormattedTimestamp();
+  
+  const embed = new EmbedBuilder()
+    .setColor('#FF0000')
+    .setAuthor({
+      name: `${msg.author.username}`,
+      iconURL: msg.author.displayAvatarURL({ dynamic: true })
+    })
+    .setDescription(`\`\`\`${msg.content}\`\`\``)
+    .addFields(
+      { name: 'Detection', value: ageResult === 'NO' ? 'No age/Under 18' : 'AI Decision', inline: true },
+      { name: 'Channel', value: `<#${msg.channel.id}>`, inline: true }
+    )
+    .setFooter({
+      text: `ID: ${msg.author.id} | ${timestamp}`
+    });
+  
+  const actionRow = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId(`ban_${msg.author.id}_${Date.now()}`)
+        .setLabel('banna')
+        .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId(`ignore_${msg.author.id}_${Date.now()}`)
+        .setLabel('ignora')
+        .setStyle(ButtonStyle.Secondary)
+    );
+  
+  await logChannel.send({ embeds: [embed], components: [actionRow] });
 }
 
 // ==================== HANDLE ILLEGAL CONTENT ====================
-async function handleIllegalContent(msg, detection) {
+async function handleIllegalContent(msg) {
   await msg.delete();
   
   let banned = false;
   try {
     await msg.member.ban({ 
-      reason: `ILLEGAL: ${detection.category}`,
+      reason: `Illegal content - Auto-banned`,
       days: 7
     });
     banned = true;
-  } catch (error) {}
+  } catch (error) {
+    console.error('Failed to ban:', error.message);
+  }
   
   const logChannel = msg.guild.channels.cache.get(LOG_CHANNEL_ID);
   if (logChannel) {
-    const timestamp = getFormattedTimestamp();
-    
     const embed = new EmbedBuilder()
       .setColor('#FF0000')
       .setTitle('🚨 ILLEGAL CONTENT - AUTO-BANNED')
       .setDescription(
         `**User:** ${msg.author.username} (${msg.author.id})\n` +
-        `**Category:** ${detection.category.toUpperCase()}\n` +
-        `**Confidence:** ${detection.confidence}\n` +
         `**Channel:** <#${msg.channel.id}>\n` +
-        `**Time:** ${timestamp}\n\n` +
-        `**Content:**\n\`\`\`${msg.content.substring(0, 1000)}\`\`\`\n\n` +
-        `**AI Analysis:** ${detection.reason}`
+        `**Time:** ${getFormattedTimestamp()}\n\n` +
+        `**Content:**\n\`\`\`${msg.content.substring(0, 800)}\`\`\``
       )
       .setFooter({ text: `AUTO-BANNED ${banned ? '✅' : '❌'}` })
       .setTimestamp();
     
-    if (banned) {
-      const actionRow = new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId(`unban_${msg.author.id}_${Date.now()}`)
-            .setLabel('unban')
-            .setStyle(ButtonStyle.Success)
-        );
-      
-      await logChannel.send({ embeds: [embed], components: [actionRow] });
-    } else {
-      await logChannel.send({ embeds: [embed] });
-    }
+    await logChannel.send({ embeds: [embed] });
   }
 }
 
@@ -474,7 +330,7 @@ client.on('interactionCreate', async (interaction) => {
         
         const embed = EmbedBuilder.from(interaction.message.embeds[0])
           .setFooter({ 
-            text: `id: ${userId} | reason: underage | ${timestamp} • bannato da @${interaction.user.username}` 
+            text: `ID: ${userId} | ${timestamp} • BANNED by @${interaction.user.username}` 
           });
         
         await interaction.message.edit({ embeds: [embed], components: [] });
@@ -484,23 +340,11 @@ client.on('interactionCreate', async (interaction) => {
     else if (action === 'ignore') {
       const embed = EmbedBuilder.from(interaction.message.embeds[0])
         .setFooter({ 
-          text: `id: ${userId} | reason: underage | ${timestamp} • ignorato da @${interaction.user.username}` 
+          text: `ID: ${userId} | ${timestamp} • IGNORED by @${interaction.user.username}` 
         });
       
       await interaction.message.edit({ embeds: [embed], components: [] });
       await interaction.editReply({ content: '✅ Ignored' });
-    }
-    else if (action === 'unban') {
-      await interaction.guild.members.unban(userId, `Unbanned by ${interaction.user.tag}`);
-      
-      const embed = EmbedBuilder.from(interaction.message.embeds[0])
-        .setColor('#00FF00')
-        .setFooter({ 
-          text: `id: ${userId} | ${timestamp} • UNBANNED by @${interaction.user.username}` 
-        });
-      
-      await interaction.message.edit({ embeds: [embed], components: [] });
-      await interaction.editReply({ content: `✅ Unbanned` });
     }
   } catch (error) {
     await interaction.editReply({ content: '❌ Error' });
@@ -512,17 +356,14 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 
 app.get('/', (req, res) => {
-  const status = keyManager.getAllStatus();
-  
   res.json({ 
     status: 'online',
     bot: client.user?.tag || 'Starting...',
     keys: {
-      total: keyManager.keys.length,
-      active_index: keyManager.currentIndex,
-      details: status
+      total: API_KEYS.length,
+      current: currentKeyIndex,
+      stats: keyStats
     },
-    total_requests: Object.values(keyManager.requestsCount).reduce((a, b) => a + b, 0),
     uptime: process.uptime()
   });
 });
@@ -536,4 +377,13 @@ console.log('🔑 Logging in...');
 client.login(process.env.BOT_TOKEN).catch(err => {
   console.error('❌ Login failed:', err.message);
   process.exit(1);
+});
+
+// ==================== ERROR HANDLING ====================
+process.on('unhandledRejection', (error) => {
+  console.error('Unhandled rejection:', error);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught exception:', error);
 });
