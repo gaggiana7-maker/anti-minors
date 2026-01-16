@@ -5,7 +5,7 @@ console.log('🚀 Discord Minor Detection Bot Starting...');
 
 // ==================== CONFIGURATION ====================
 const SERVER_ID = '1447204367089270874';
-const LOG_CHANNEL_ID = '1457870506505011331'; // BAN/LOG CHANNEL
+const LOG_CHANNEL_ID = '1457870506505011331';
 const SPECIAL_CHANNEL_ID = '1447208095217619055';
 
 // ==================== TIME FUNCTIONS ====================
@@ -19,17 +19,7 @@ function getCurrentTime() {
 }
 
 function getFormattedTimestamp() {
-  const now = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  
-  const isYesterday = now.getDate() === yesterday.getDate() + 1;
-  
-  if (isYesterday) {
-    return `Yesterday at ${getCurrentTime()}`;
-  } else {
-    return `Today at ${getCurrentTime()}`;
-  }
+  return `Today at ${getCurrentTime()}`;
 }
 
 // ==================== MINOR DETECTION ====================
@@ -38,119 +28,75 @@ function detectMinor(text) {
   
   const lowercase = text.toLowerCase();
   
-  // PATTERN 1: SWAPPED/REVERSED NUMBERS = MINOR
-  // 51 = 15, 61 = 16, 71 = 17, etc.
-  const swappedNumbers = ['51', '61', '71', '52', '62', '72', '53', '63', '73', '54', '64', '74', '55', '65', '75', '56', '66', '76', '57', '67', '77'];
+  // 1. REVERSED/SWAP/🔄 = MINORE CERCA MAGGIORENNE
+  if (lowercase.includes('reversed') || lowercase.includes('swap') || 
+      lowercase.includes('🔄') || lowercase.includes('🔃') || 
+      lowercase.includes('↪️') || lowercase.includes('↩️')) {
+    
+    const numberMatch = lowercase.match(/\b(\d{1,2})\b/);
+    if (numberMatch) {
+      const age = parseInt(numberMatch[1]);
+      return { age: age, reason: 'underage (reversed)' };
+    }
+    return { age: 'unknown', reason: 'underage (reversed/swap)' };
+  }
   
-  for (const swapped of swappedNumbers) {
-    const pattern = new RegExp(`\\b${swapped}\\b`, 'i');
-    if (pattern.test(lowercase)) {
-      const swappedAge = parseInt(swapped);
-      const realAge = parseInt(swapped.toString().split('').reverse().join(''));
-      
-      if (realAge >= 1 && realAge <= 17) {
-        return { 
-          age: realAge, 
-          reason: 'underage' 
-        };
+  // 2. NUMERI SCAMBIATI 51=15, 61=16, 71=17
+  if (lowercase.includes('51') || lowercase.includes('61') || lowercase.includes('71')) {
+    return { age: 'swapped', reason: 'underage (swapped number)' };
+  }
+  
+  // 3. SOLO SE DICHIARA LA SUA ETÀ, NON MISURE!
+  // Pattern specifici per ETÀ
+  
+  // "I'm 17", "I am 16", "age 15"
+  const agePatterns = [
+    /(?:i'?m|i am|im|age is|aged?)\s+(\d{1,2})\b/i,
+    /\b(\d{1,2})\s*(?:yo|y\.o\.|years? old|y\/o|anni?)\b/i,
+    /\b(\d{1,2})\s+(?:m|f|male|female)\b/i,
+    /^(\d{1,2})\s*(?:m|f)/i,
+  ];
+  
+  for (const pattern of agePatterns) {
+    const match = lowercase.match(pattern);
+    if (match && match[1]) {
+      const age = parseInt(match[1]);
+      if (age >= 1 && age <= 17) {
+        return { age: age, reason: 'underage' };
       }
     }
   }
   
-  // PATTERN 2: SWAPPED NUMBER WITH REVERSE EMOJIS
-  const swappedEmojiPattern = /(51|61|71|15|16|17)\s*[🔃🔄↩️↪️]/;
-  const swappedEmojiMatch = lowercase.match(swappedEmojiPattern);
+  // IGNORA MISURE: "8cm", "7.5"", "18cm" - NON SONO ETÀ!
+  const measurementPatterns = [
+    /\b\d+(?:\.\d+)?\s*(?:cm|centimeters?|in|inches?|")\b/i,
+    /\bmine is\s+\d+/i,
+    /\bsize\s+\d+/i,
+    /\blength\s+\d+/i,
+    /\b\d+(?:\.\d+)?"/i,
+  ];
   
-  if (swappedEmojiMatch) {
-    const swappedAge = parseInt(swappedEmojiMatch[1]);
-    let realAge = swappedAge;
-    
-    // If it's 51/61/71, reverse it
-    if (swappedAge > 50) {
-      realAge = parseInt(swappedAge.toString().split('').reverse().join(''));
-    }
-    
-    if (realAge >= 1 && realAge <= 17) {
-      return { 
-        age: realAge, 
-        reason: 'underage' 
-      };
-    }
-  }
-  
-  // PATTERN 3: "REVERSED" KEYWORD WITH NUMBER
-  const reversedKeywordPattern = /\b(51|61|71|15|16|17)\s*(?:reversed|swap)\b/i;
-  const reversedKeywordMatch = lowercase.match(reversedKeywordPattern);
-  
-  if (reversedKeywordMatch) {
-    const swappedAge = parseInt(reversedKeywordMatch[1]);
-    let realAge = swappedAge;
-    
-    if (swappedAge > 50) {
-      realAge = parseInt(swappedAge.toString().split('').reverse().join(''));
-    }
-    
-    if (realAge >= 1 && realAge <= 17) {
-      return { 
-        age: realAge, 
-        reason: 'underage' 
-      };
-    }
-  }
-  
-  // PATTERN 4: DIRECT MINOR AGE 1-17
-  const minorAgePattern = /\b(1[0-7]|[1-9])\b/;
-  const ageMatch = lowercase.match(minorAgePattern);
-  
-  if (ageMatch) {
-    const age = parseInt(ageMatch[1]);
-    if (age >= 1 && age <= 17) {
-      return { age: age, reason: 'underage' };
+  for (const pattern of measurementPatterns) {
+    if (pattern.test(lowercase)) {
+      return null; // È una misura, ignora
     }
   }
   
   return null;
 }
 
-// ==================== ATTACHMENT CHECK (FOR SPECIAL CHANNEL ONLY) ====================
+// ==================== ATTACHMENT CHECK ====================
 function checkAttachments(attachments) {
-  if (!attachments || attachments.size === 0) {
-    console.log('❌ No attachments found');
-    return false;
-  }
+  if (!attachments || attachments.size === 0) return false;
   
-  const hasValidAttachment = Array.from(attachments.values()).some(att => {
-    // Check Discord URL
-    if (att.url && (
-      att.url.includes('cdn.discordapp.com') || 
-      att.url.includes('media.discordapp.net') ||
-      att.url.includes('images-ext-')
-    )) {
-      return true;
-    }
-    
-    // Check content type
+  return Array.from(attachments.values()).some(att => {
+    if (att.url && att.url.includes('cdn.discordapp.com')) return true;
     if (att.contentType && (
-      att.contentType.startsWith('image/') ||
+      att.contentType.startsWith('image/') || 
       att.contentType.startsWith('video/')
-    )) {
-      return true;
-    }
-    
-    // Check file extension
-    if (att.name) {
-      const lowerName = att.name.toLowerCase();
-      const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
-      const videoExtensions = ['.mp4', '.mov', '.avi', '.webm', '.mkv'];
-      
-      return imageExtensions.some(ext => lowerName.endsWith(ext)) || 
-             videoExtensions.some(ext => lowerName.endsWith(ext));
-    }
-    
+    )) return true;
     return false;
   });
-  
-  return hasValidAttachment;
 }
 
 // ==================== DISCORD CLIENT ====================
@@ -167,36 +113,29 @@ const client = new Client({
 client.once('ready', () => {
   console.log(`✅ Bot Online: ${client.user.tag}`);
   console.log(`📊 Connected to ${client.guilds.cache.size} server(s)`);
-  console.log(`👁️  Watching for minors in all channels...`);
   
-  client.user.setActivity('minor detection ⚠️', { 
-    type: 'WATCHING' 
-  });
+  client.user.setActivity('minor detection ⚠️', { type: 'WATCHING' });
 });
 
 // ==================== MESSAGE HANDLER ====================
 client.on('messageCreate', async (msg) => {
-  // Ignore bots and DMs
   if (msg.author.bot) return;
   if (!msg.guild || msg.guild.id !== SERVER_ID) return;
   
   try {
     const isSpecialChannel = msg.channel.id === SPECIAL_CHANNEL_ID;
     
-    // SAME LOGIC FOR BOTH CHANNELS: MINOR DETECTION
+    // CHECK MINORS
     const minorDetection = detectMinor(msg.content);
     
     if (minorDetection !== null) {
-      // DELETE MESSAGE (BOTH CHANNELS)
       await msg.delete();
-      console.log(`🚨 Minor detected: ${msg.author.tag} - ${minorDetection.reason}`);
+      console.log(`🚨 Minor: ${msg.author.tag} - "${minorDetection.reason}"`);
       
-      // LOG TO BAN CHANNEL ONLY (BOTH CHANNELS)
       const logChannel = msg.guild.channels.cache.get(LOG_CHANNEL_ID);
       if (logChannel) {
         const timestamp = getFormattedTimestamp();
         
-        // Create embed in YOUR EXACT FORMAT
         const embed = new EmbedBuilder()
           .setColor('#2b2d31')
           .setAuthor({
@@ -211,38 +150,32 @@ client.on('messageCreate', async (msg) => {
         const actionRow = new ActionRowBuilder()
           .addComponents(
             new ButtonBuilder()
-              .setCustomId(`ban_${msg.author.id}_${msg.id}`)
+              .setCustomId(`ban_${msg.author.id}_${Date.now()}`)
               .setLabel('banna')
               .setStyle(ButtonStyle.Danger),
             new ButtonBuilder()
-              .setCustomId(`ignora_${msg.author.id}_${msg.id}`)
+              .setCustomId(`ignore_${msg.author.id}_${Date.now()}`)
               .setLabel('ignora')
               .setStyle(ButtonStyle.Secondary)
           );
         
-        await logChannel.send({ 
-          embeds: [embed], 
-          components: [actionRow] 
-        });
+        await logChannel.send({ embeds: [embed], components: [actionRow] });
       }
-      
-      return; // Stop processing
+      return;
     }
     
-    // SPECIAL CHANNEL EXTRA RULE: MUST HAVE PHOTO/VIDEO
+    // SPECIAL CHANNEL: MUST HAVE PHOTO/VIDEO
     if (isSpecialChannel) {
       const hasValidAttachment = checkAttachments(msg.attachments);
       
       if (!hasValidAttachment) {
         await msg.delete();
-        console.log(`🗑️ Special channel: No photo/video from ${msg.author.tag}`);
-        // NO DM, just delete
+        console.log(`🗑️ Special: No photo/video from ${msg.author.tag}`);
         return;
       }
     }
     
-    // If we get here, message is allowed
-    console.log(`✅ Allowed: ${msg.author.tag} in ${isSpecialChannel ? 'special' : 'regular'} channel`);
+    console.log(`✅ Allowed: ${msg.author.tag}`);
     
   } catch (error) {
     console.error('❌ Error:', error.message);
@@ -253,73 +186,44 @@ client.on('messageCreate', async (msg) => {
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isButton()) return;
   
-  const [action, userId, messageId] = interaction.customId.split('_');
+  const [action, userId] = interaction.customId.split('_');
   const timestamp = getFormattedTimestamp();
   
-  if (!interaction.guild) {
-    return interaction.reply({ 
-      content: '❌ This interaction cannot be processed.',
-      ephemeral: true 
-    });
-  }
+  if (!interaction.guild) return;
   
   await interaction.deferReply({ ephemeral: true });
   
   try {
-    if (action === 'ban' || action === 'banna') {
+    if (action === 'ban') {
       const member = await interaction.guild.members.fetch(userId).catch(() => null);
       
       if (member) {
-        await member.ban({ 
-          reason: `Minor detected - Action by ${interaction.user.tag}` 
-        });
+        await member.ban({ reason: `Minor detected` });
         
-        // Update log message
         const embed = EmbedBuilder.from(interaction.message.embeds[0])
-          .setColor('#2b2d31')
           .setFooter({ 
             text: `id: ${userId} | reason: underage | ${timestamp} • bannato da @${interaction.user.username}` 
           });
         
-        await interaction.message.edit({ 
-          embeds: [embed], 
-          components: [] 
-        });
-        
-        await interaction.editReply({ 
-          content: `✅ Banned <@${userId}>` 
-        });
-        
-        console.log(`🔨 Banned ${member.user.tag}`);
+        await interaction.message.edit({ embeds: [embed], components: [] });
+        await interaction.editReply({ content: `✅ Banned` });
       }
     }
-    else if (action === 'ignore' || action === 'ignora') {
-      // Update log message
+    else if (action === 'ignore') {
       const embed = EmbedBuilder.from(interaction.message.embeds[0])
-        .setColor('#2b2d31')
         .setFooter({ 
           text: `id: ${userId} | reason: underage | ${timestamp} • ignorato da @${interaction.user.username}` 
         });
       
-      await interaction.message.edit({ 
-        embeds: [embed], 
-        components: [] 
-      });
-      
-      await interaction.editReply({ 
-        content: '✅ Case ignored' 
-      });
-      
-      console.log(`✅ Case ignored`);
+      await interaction.message.edit({ embeds: [embed], components: [] });
+      await interaction.editReply({ content: '✅ Ignored' });
     }
   } catch (error) {
-    await interaction.editReply({ 
-      content: '❌ Error processing action' 
-    });
+    await interaction.editReply({ content: '❌ Error' });
   }
 });
 
-// ==================== EXPRESS SERVER FOR RENDER ====================
+// ==================== EXPRESS SERVER ====================
 const app = express();
 const PORT = process.env.PORT || 10000;
 
@@ -331,26 +235,11 @@ app.get('/', (req, res) => {
   });
 });
 
-const server = app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, () => {
   console.log(`🌐 Health check: http://localhost:${PORT}`);
 });
 
-// ==================== GRACEFUL SHUTDOWN ====================
-process.on('SIGTERM', async () => {
-  console.log('🔄 Shutting down...');
-  await client.destroy();
-  server.close();
-  process.exit(0);
-});
-
-process.on('SIGINT', async () => {
-  console.log('🔄 Shutting down...');
-  await client.destroy();
-  server.close();
-  process.exit(0);
-});
-
-// ==================== BOT LOGIN ====================
+// ==================== LOGIN ====================
 console.log('🔑 Logging in...');
 client.login(process.env.BOT_TOKEN).catch(err => {
   console.error('❌ Login failed:', err.message);
