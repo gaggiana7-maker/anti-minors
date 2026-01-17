@@ -2,19 +2,12 @@ const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder
 const express = require('express');
 const Groq = require("groq-sdk");
 
-console.log('🚀 Fixed Bot Starting...');
+console.log('🚀 ULTIMATE STRICT Age Bot Starting...');
 
 // ==================== CONFIG ====================
 const SERVER_ID = '1447204367089270874';
 const LOG_CHANNEL_ID = '1457870506505011331';
 const SPECIAL_CHANNEL_ID = '1447208095217619055';
-
-// CHANNELS WHERE BOT SHOULD OPERATE
-const ALLOWED_CHANNELS = [
-  '1447208038665556053', // general
-  '1447208095217619055', // self
-  '1447204367089270876', // other channel?
-];
 
 // ==================== API KEYS ====================
 const API_KEYS = [
@@ -23,71 +16,89 @@ const API_KEYS = [
   process.env.GROQ_KEY_3,
   process.env.GROQ_KEY_4,
   process.env.GROQ_KEY_5
-].filter(Boolean);
+].filter(key => key && key.trim() !== '');
 
 console.log(`🔑 ${API_KEYS.length} keys loaded`);
-let keyIndex = 0;
+let currentKeyIndex = 0;
 
-function getKey() { return API_KEYS[keyIndex]; }
-function nextKey() { keyIndex = (keyIndex + 1) % API_KEYS.length; }
+function getCurrentKey() { return API_KEYS[currentKeyIndex]; }
+function rotateKey() { currentKeyIndex = (currentKeyIndex + 1) % API_KEYS.length; }
 
-async function askAI(question) {
-  for (let i = 0; i < API_KEYS.length * 2; i++) {
+async function askAI(prompt) {
+  for (let attempt = 0; attempt < API_KEYS.length * 2; attempt++) {
     try {
-      const groq = new Groq({ apiKey: getKey() });
+      const groq = new Groq({ apiKey: getCurrentKey() });
       const response = await groq.chat.completions.create({
-        messages: [{ role: "user", content: question }],
+        messages: [{ role: "user", content: prompt }],
         model: "llama-3.3-70b-versatile",
         temperature: 0.1,
-        max_tokens: 200,
+        max_tokens: 150,
         response_format: { type: "json_object" }
       });
       
       const result = JSON.parse(response.choices[0].message.content);
       return result;
       
-    } catch (e) {
-      console.log(`Key ${keyIndex} failed`);
-      nextKey();
-      await new Promise(r => setTimeout(r, 300));
+    } catch (error) {
+      console.log(`❌ Key ${currentKeyIndex} failed`);
+      rotateKey();
+      await new Promise(resolve => setTimeout(resolve, 300));
     }
   }
-  return { delete: false, minor: false, confidence: 'low', reason: 'AI failed' };
+  return { delete: true, minor: false, confidence: 'low', reason: 'AI failed - deleting for safety' };
 }
 
-// ==================== AI CHECK ====================
-async function analyzeMessage(text) {
-  const prompt = `Analyze this Discord message:
-
-"${text}"
-
-RULES:
-1. If message contains age 18+ (18, 19, 20, etc.) → KEEP
-2. If message contains age under 18 (15, 16, 17) → DELETE + FLAG MINOR
-3. If NO age mentioned but looks like dating/NSFW → DELETE ONLY (no flag)
-4. General chat without age → KEEP
-5. Watch for: "41 reversed" = 14 (minor), "51 swap" = 15 (minor)
-
-Return JSON:
-{
-  "delete": boolean (delete message?),
-  "minor": boolean (is this a CERTAIN minor?),
-  "confidence": "high/medium/low",
-  "reason": "brief explanation"
-}`;
+// ==================== ULTIMATE STRICT CHECK ====================
+async function checkMessage(text) {
+  const prompt = `Message: "${text}"
+  
+  ABSOLUTE RULES:
+  1. Does this message contain ANY mention of being 18 years old or OLDER?
+  2. If YES → KEEP
+  3. If NO → DELETE
+  4. If mentions age UNDER 18 → DELETE + FLAG (minor)
+  
+  Examples KEEP (has age 18+):
+  - "18m", "f18", "18 top", "M 18 Arab"
+  - "23m", "25f", "30yo", "22 years old"
+  - "age is 19", "I'm 21", "età 24"
+  
+  Examples DELETE (no age 18+):
+  - "hi", "hello", "hey"
+  - "DMs open", "looking for"
+  - "anyone?", "message me"
+  - "test", "lol", "wassup"
+  
+  Examples DELETE + FLAG (minor):
+  - "15", "16yo", "17 looking"
+  - "41 reversed" (means 14)
+  - "51 swap" (means 15)
+  
+  Return JSON:
+  {
+    "has_age_18_plus": boolean (true if ANY age 18+ mentioned),
+    "is_minor": boolean (true if CERTAIN age < 18),
+    "confidence": "high/medium/low",
+    "reason": "brief explanation"
+  }`;
   
   return await askAI(prompt);
 }
 
 // ==================== DISCORD ====================
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ]
 });
 
 client.once('ready', () => {
   console.log(`✅ ${client.user.tag} ready`);
   console.log(`📋 Log channel: ${LOG_CHANNEL_ID}`);
-  client.user.setActivity('Age Check', { type: 'WATCHING' });
+  console.log(`🚨 RULE: No age 18+ = DELETE PERIOD`);
+  client.user.setActivity('18+ ONLY 🔞', { type: 'WATCHING' });
 });
 
 // ==================== MESSAGE HANDLER ====================
@@ -95,66 +106,72 @@ client.on('messageCreate', async (msg) => {
   if (msg.author.bot) return;
   if (!msg.guild || msg.guild.id !== SERVER_ID) return;
   
-  // ONLY operate in specific channels
-  if (!ALLOWED_CHANNELS.includes(msg.channel.id)) {
-    return; // Ignore other channels
-  }
-  
-  if (!msg.content || msg.content.trim().length < 2) return;
+  // Skip very short
+  if (!msg.content || msg.content.trim().length < 1) return;
   
   try {
     const isSpecialChannel = msg.channel.id === SPECIAL_CHANNEL_ID;
     
-    // Special channel: needs attachment
+    // SPECIAL CHANNEL: Needs photo/video
     if (isSpecialChannel) {
-      const hasFile = msg.attachments?.size > 0;
-      if (!hasFile) {
+      const hasAttachment = msg.attachments?.size > 0 && 
+        Array.from(msg.attachments.values()).some(att => 
+          att.contentType?.startsWith('image/') || 
+          att.contentType?.startsWith('video/')
+        );
+      
+      if (!hasAttachment) {
         await msg.delete();
-        console.log(`📸 Deleted: No attachment in media channel`);
         return;
       }
     }
     
-    const analysis = await analyzeMessage(msg.content);
-    console.log(`🤖 Channel: ${msg.channel.id}, "${msg.content.substring(0, 30)}..." → Delete: ${analysis.delete}, Minor: ${analysis.minor}`);
+    const check = await checkMessage(msg.content);
+    console.log(`🤖 "${msg.content.substring(0, 40)}..." → Has age 18+: ${check.has_age_18_plus}, Minor: ${check.is_minor}`);
     
-    if (analysis.delete) {
+    if (!check.has_age_18_plus) {
+      // NO AGE 18+ → DELETE
       await msg.delete();
       
-      // LOG ONLY if CERTAIN MINOR
-      if (analysis.minor && analysis.confidence === 'high') {
-        console.log(`📋 LOGGING MINOR: ${analysis.reason}`);
-        await logMinor(msg, analysis);
+      // ONLY LOG IF CERTAIN MINOR
+      if (check.is_minor && check.confidence === 'high') {
+        console.log(`📋 LOGGING MINOR: ${check.reason}`);
+        await logMinor(msg, check);
       } else {
-        console.log(`🗑️ Deleted (not a minor)`);
+        console.log(`🗑️ Deleted: No age 18+`);
       }
     } else {
-      console.log(`✅ Kept`);
+      // HAS AGE 18+ → KEEP
+      console.log(`✅ Kept: Has age 18+`);
     }
     
-  } catch (e) {
-    console.error('Error:', e.message);
+  } catch (error) {
+    console.error('Error:', error.message);
   }
 });
 
-// ==================== LOGGING - FIXED ====================
-async function logMinor(msg, analysis) {
+// ==================== LOGGING ====================
+async function logMinor(msg, check) {
   try {
-    const logChannel = await client.channels.fetch(LOG_CHANNEL_ID).catch(() => null);
+    const logChannel = client.channels.cache.get(LOG_CHANNEL_ID);
     if (!logChannel) {
-      console.error(`❌ Cannot find log channel ${LOG_CHANNEL_ID}`);
+      console.error(`❌ Log channel ${LOG_CHANNEL_ID} not found`);
       return;
     }
     
-    console.log(`📨 Sending to log channel: ${logChannel.name}`);
+    console.log(`📨 Sending minor alert...`);
     
     const embed = new EmbedBuilder()
       .setColor('#FF0000')
       .setTitle('🚨 MINOR DETECTED')
-      .setAuthor({ name: msg.author.tag, iconURL: msg.author.displayAvatarURL() })
+      .setAuthor({ 
+        name: msg.author.tag, 
+        iconURL: msg.author.displayAvatarURL({ dynamic: true }) 
+      })
       .setDescription(`**Message:**\n\`\`\`${msg.content.substring(0, 1000)}\`\`\``)
       .addFields(
-        { name: 'Reason', value: analysis.reason || 'Underage detected', inline: false },
+        { name: 'Reason', value: check.reason || 'Underage detected', inline: false },
+        { name: 'Confidence', value: '✅ HIGH', inline: true },
         { name: 'User ID', value: `\`${msg.author.id}\``, inline: true },
         { name: 'Channel', value: `<#${msg.channel.id}>`, inline: true }
       )
@@ -172,10 +189,10 @@ async function logMinor(msg, analysis) {
     );
     
     await logChannel.send({ embeds: [embed], components: [buttons] });
-    console.log(`✅ Logged to channel successfully`);
+    console.log(`✅ Logged successfully`);
     
-  } catch (e) {
-    console.error('❌ Logging failed:', e.message);
+  } catch (error) {
+    console.error('❌ Logging failed:', error.message);
   }
 }
 
@@ -186,26 +203,50 @@ client.on('interactionCreate', async (interaction) => {
   
   await interaction.deferReply({ ephemeral: true });
   
-  if (action === 'ban') {
-    const member = await interaction.guild.members.fetch(userId).catch(() => null);
-    if (member) {
-      await member.ban({ reason: `Minor - by ${interaction.user.tag}` });
-      await interaction.editReply({ content: '✅ Banned' });
+  try {
+    if (action === 'ban') {
+      const member = await interaction.guild.members.fetch(userId).catch(() => null);
+      if (member) {
+        await member.ban({ reason: `Minor - banned by ${interaction.user.tag}` });
+        
+        const embed = EmbedBuilder.from(interaction.message.embeds[0])
+          .setFooter({ text: `Banned by ${interaction.user.tag}` });
+        
+        await interaction.message.edit({ embeds: [embed], components: [] });
+        await interaction.editReply({ content: '✅ Banned' });
+      }
     }
-  } else if (action === 'ignore') {
-    await interaction.editReply({ content: '✅ Ignored' });
+    else if (action === 'ignore') {
+      const embed = EmbedBuilder.from(interaction.message.embeds[0])
+        .setFooter({ text: `Ignored by ${interaction.user.tag}` });
+      
+      await interaction.message.edit({ embeds: [embed], components: [] });
+      await interaction.editReply({ content: '✅ Ignored' });
+    }
+  } catch (error) {
+    await interaction.editReply({ content: '❌ Error' });
   }
 });
 
 // ==================== SERVER ====================
 const app = express();
-app.get('/', (req, res) => res.json({ 
-  status: 'online', 
-  bot: client.user?.tag,
-  log_channel: LOG_CHANNEL_ID 
-}));
-app.listen(process.env.PORT || 10000, () => console.log('🌐 Server up'));
+const PORT = process.env.PORT || 10000;
+
+app.get('/', (req, res) => {
+  res.json({ 
+    status: 'online',
+    bot: client.user?.tag,
+    rule: 'NO AGE 18+ = DELETE PERIOD'
+  });
+});
+
+app.listen(PORT, () => {
+  console.log(`🌐 Health check on port ${PORT}`);
+});
 
 // ==================== LOGIN ====================
 console.log('🔑 Logging in...');
-client.login(process.env.BOT_TOKEN).catch(console.error);
+client.login(process.env.BOT_TOKEN).catch(err => {
+  console.error('❌ Login failed:', err.message);
+  process.exit(1);
+});
