@@ -2,12 +2,19 @@ const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder
 const express = require('express');
 const Groq = require("groq-sdk");
 
-console.log('🚀 Pure AI Bot Starting...');
+console.log('🚀 Fixed Bot Starting...');
 
 // ==================== CONFIG ====================
 const SERVER_ID = '1447204367089270874';
 const LOG_CHANNEL_ID = '1457870506505011331';
 const SPECIAL_CHANNEL_ID = '1447208095217619055';
+
+// CHANNELS WHERE BOT SHOULD OPERATE
+const ALLOWED_CHANNELS = [
+  '1447208038665556053', // general
+  '1447208095217619055', // self
+  '1447204367089270876', // other channel?
+];
 
 // ==================== API KEYS ====================
 const API_KEYS = [
@@ -45,26 +52,26 @@ async function askAI(question) {
       await new Promise(r => setTimeout(r, 300));
     }
   }
-  return { delete: true, minor: false, reason: 'AI failed' };
+  return { delete: false, minor: false, confidence: 'low', reason: 'AI failed' };
 }
 
-// ==================== PURE AI CHECK ====================
+// ==================== AI CHECK ====================
 async function analyzeMessage(text) {
-  const prompt = `Analyze this Discord message in an 18+ NSFW server:
+  const prompt = `Analyze this Discord message:
 
 "${text}"
 
-Rules:
-1. Message must contain CLEAR mention of being 18 years old or OLDER
-2. If NO age 18+ mentioned → DELETE
-3. If age UNDER 18 mentioned → DELETE + LOG (minor)
-4. Watch for bypass attempts: "41 reversed", "51 swap", coded language
-5. Media channel still needs age 18+
+RULES:
+1. If message contains age 18+ (18, 19, 20, etc.) → KEEP
+2. If message contains age under 18 (15, 16, 17) → DELETE + FLAG MINOR
+3. If NO age mentioned but looks like dating/NSFW → DELETE ONLY (no flag)
+4. General chat without age → KEEP
+5. Watch for: "41 reversed" = 14 (minor), "51 swap" = 15 (minor)
 
 Return JSON:
 {
-  "delete": true/false,
-  "minor": true/false (only true if CERTAIN age < 18),
+  "delete": boolean (delete message?),
+  "minor": boolean (is this a CERTAIN minor?),
   "confidence": "high/medium/low",
   "reason": "brief explanation"
 }`;
@@ -79,74 +86,97 @@ const client = new Client({
 
 client.once('ready', () => {
   console.log(`✅ ${client.user.tag} ready`);
-  client.user.setActivity('AI Age Check', { type: 'WATCHING' });
+  console.log(`📋 Log channel: ${LOG_CHANNEL_ID}`);
+  client.user.setActivity('Age Check', { type: 'WATCHING' });
 });
 
 // ==================== MESSAGE HANDLER ====================
 client.on('messageCreate', async (msg) => {
   if (msg.author.bot) return;
   if (!msg.guild || msg.guild.id !== SERVER_ID) return;
+  
+  // ONLY operate in specific channels
+  if (!ALLOWED_CHANNELS.includes(msg.channel.id)) {
+    return; // Ignore other channels
+  }
+  
   if (!msg.content || msg.content.trim().length < 2) return;
   
   try {
     const isSpecialChannel = msg.channel.id === SPECIAL_CHANNEL_ID;
     
-    // Special channel: Check for ANY attachment
+    // Special channel: needs attachment
     if (isSpecialChannel) {
       const hasFile = msg.attachments?.size > 0;
       if (!hasFile) {
         await msg.delete();
+        console.log(`📸 Deleted: No attachment in media channel`);
         return;
       }
     }
     
     const analysis = await analyzeMessage(msg.content);
-    console.log(`🤖 "${msg.content.substring(0, 30)}..." → Delete: ${analysis.delete}, Minor: ${analysis.minor}, Conf: ${analysis.confidence}`);
+    console.log(`🤖 Channel: ${msg.channel.id}, "${msg.content.substring(0, 30)}..." → Delete: ${analysis.delete}, Minor: ${analysis.minor}`);
     
     if (analysis.delete) {
       await msg.delete();
       
-      // ONLY LOG if CERTAIN MINOR with HIGH confidence
+      // LOG ONLY if CERTAIN MINOR
       if (analysis.minor && analysis.confidence === 'high') {
+        console.log(`📋 LOGGING MINOR: ${analysis.reason}`);
         await logMinor(msg, analysis);
+      } else {
+        console.log(`🗑️ Deleted (not a minor)`);
       }
+    } else {
+      console.log(`✅ Kept`);
     }
-    // If delete = false, message stays
     
   } catch (e) {
     console.error('Error:', e.message);
   }
 });
 
-// ==================== LOGGING ====================
+// ==================== LOGGING - FIXED ====================
 async function logMinor(msg, analysis) {
-  const logChannel = client.channels.cache.get(LOG_CHANNEL_ID);
-  if (!logChannel) return;
-  
-  const embed = new EmbedBuilder()
-    .setColor('#FF0000')
-    .setTitle('🚨 CERTAIN MINOR DETECTED')
-    .setAuthor({ name: msg.author.tag, iconURL: msg.author.displayAvatarURL() })
-    .setDescription(`**Message:**\n\`\`\`${msg.content.substring(0, 1000)}\`\`\``)
-    .addFields(
-      { name: 'Reason', value: analysis.reason, inline: false },
-      { name: 'Confidence', value: '✅ HIGH', inline: true },
-      { name: 'User ID', value: `\`${msg.author.id}\``, inline: true }
-    )
-    .setTimestamp();
-  
-  const buttons = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`ban_${msg.author.id}`)
-      .setLabel('Ban User')
-      .setStyle(ButtonStyle.Danger),
-    new ButtonBuilder()
-      .setCustomId(`ignore_${msg.author.id}`)
-      .setLabel('Ignore')
-      .setStyle(ButtonStyle.Secondary)
-  );
-  
-  await logChannel.send({ embeds: [embed], components: [buttons] });
+  try {
+    const logChannel = await client.channels.fetch(LOG_CHANNEL_ID).catch(() => null);
+    if (!logChannel) {
+      console.error(`❌ Cannot find log channel ${LOG_CHANNEL_ID}`);
+      return;
+    }
+    
+    console.log(`📨 Sending to log channel: ${logChannel.name}`);
+    
+    const embed = new EmbedBuilder()
+      .setColor('#FF0000')
+      .setTitle('🚨 MINOR DETECTED')
+      .setAuthor({ name: msg.author.tag, iconURL: msg.author.displayAvatarURL() })
+      .setDescription(`**Message:**\n\`\`\`${msg.content.substring(0, 1000)}\`\`\``)
+      .addFields(
+        { name: 'Reason', value: analysis.reason || 'Underage detected', inline: false },
+        { name: 'User ID', value: `\`${msg.author.id}\``, inline: true },
+        { name: 'Channel', value: `<#${msg.channel.id}>`, inline: true }
+      )
+      .setTimestamp();
+    
+    const buttons = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`ban_${msg.author.id}_${Date.now()}`)
+        .setLabel('Ban User')
+        .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId(`ignore_${msg.author.id}_${Date.now()}`)
+        .setLabel('Ignore')
+        .setStyle(ButtonStyle.Secondary)
+    );
+    
+    await logChannel.send({ embeds: [embed], components: [buttons] });
+    console.log(`✅ Logged to channel successfully`);
+    
+  } catch (e) {
+    console.error('❌ Logging failed:', e.message);
+  }
 }
 
 // ==================== BUTTONS ====================
@@ -159,7 +189,7 @@ client.on('interactionCreate', async (interaction) => {
   if (action === 'ban') {
     const member = await interaction.guild.members.fetch(userId).catch(() => null);
     if (member) {
-      await member.ban({ reason: `Certain minor - by ${interaction.user.tag}` });
+      await member.ban({ reason: `Minor - by ${interaction.user.tag}` });
       await interaction.editReply({ content: '✅ Banned' });
     }
   } else if (action === 'ignore') {
@@ -169,7 +199,11 @@ client.on('interactionCreate', async (interaction) => {
 
 // ==================== SERVER ====================
 const app = express();
-app.get('/', (req, res) => res.json({ status: 'online', bot: client.user?.tag }));
+app.get('/', (req, res) => res.json({ 
+  status: 'online', 
+  bot: client.user?.tag,
+  log_channel: LOG_CHANNEL_ID 
+}));
 app.listen(process.env.PORT || 10000, () => console.log('🌐 Server up'));
 
 // ==================== LOGIN ====================
