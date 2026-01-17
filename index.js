@@ -131,7 +131,7 @@ const MONITORED_CHANNELS = [
   SPECIAL_CHANNEL_ID   // 1447208095217619055 - self channel (needs media)
 ];
 
-client.once('ready', () => {
+client.once('clientReady', () => {
   console.log(`✅ ${client.user.tag} ready`);
   console.log(`📋 Log channel: ${LOG_CHANNEL_ID}`);
   console.log(`🔒 Special channel: ${SPECIAL_CHANNEL_ID}`);
