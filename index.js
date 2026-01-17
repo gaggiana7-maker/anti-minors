@@ -7,7 +7,8 @@ console.log('🚀 ULTIMATE STRICT Age Bot Starting...');
 // ==================== CONFIG ====================
 const SERVER_ID = '1447204367089270874';
 const LOG_CHANNEL_ID = '1457870506505011331';
-const SPECIAL_CHANNEL_ID = '1447208095217619055';
+const SPECIAL_CHANNEL_ID = '1447208095217619055'; // self channel
+const DMS_CHANNEL_ID = '1447208038665556053'; // dms channel
 
 // ==================== API KEYS ====================
 const API_KEYS = [
@@ -126,9 +127,8 @@ const client = new Client({
 
 // Channel IDs that the bot monitors
 const MONITORED_CHANNELS = [
-  LOG_CHANNEL_ID,
-  SPECIAL_CHANNEL_ID,
-  // Add other channel IDs here if needed
+  DMS_CHANNEL_ID,      // 1447208038665556053 - dms channel
+  SPECIAL_CHANNEL_ID   // 1447208095217619055 - self channel (needs media)
 ];
 
 client.once('ready', () => {
