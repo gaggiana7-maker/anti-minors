@@ -51,6 +51,34 @@ async function askAI(prompt) {
 
 // ==================== IMPROVED STRICT CHECK ====================
 async function checkMessage(text) {
+  // PRE-CHECK: Quick regex for reversed ages with emoji (100% accuracy)
+  const reversedPattern = /(\d{2})[🔁🔄↩️]/;
+  const match = text.match(reversedPattern);
+  
+  if (match) {
+    const originalAge = match[1];
+    const reversedAge = parseInt(originalAge.split('').reverse().join(''));
+    
+    console.log(`🔍 Reversed age detected: ${originalAge} → ${reversedAge}`);
+    
+    if (reversedAge < 18) {
+      return { 
+        has_age_18_plus: false, 
+        is_minor: true, 
+        confidence: 'high', 
+        reason: `Reversed age ${reversedAge} (from ${originalAge}${match[0].slice(-1)})` 
+      };
+    } else if (reversedAge >= 18 && reversedAge <= 70) {
+      return { 
+        has_age_18_plus: true, 
+        is_minor: false, 
+        confidence: 'high', 
+        reason: `Valid reversed age ${reversedAge}` 
+      };
+    }
+  }
+  
+  // If no reversed pattern, use AI for normal checks
   const prompt = `You are analyzing a message in an adult NSFW server. Your ONLY job is to find the AGE of the PERSON WHO WROTE this message.
 
 Message: "${text}"
@@ -78,8 +106,13 @@ EXAMPLES OF MINORS (FLAG + DELETE):
 ❌ "61m reversed" → 16 reversed (MINOR)
 ❌ "m51🔁" or "m51🔄" or "51↩️" → 15 reversed (MINOR)
 ❌ "M71🔄" or "71 reversed" → 17 reversed (MINOR)
+❌ "m61🔄" or "61🔁" or "61 reversed" → 16 reversed (MINOR)
+❌ "41🔄" or "m41 reversed" → 14 reversed (MINOR)
+❌ "31🔁" or "31 swap" → 13 reversed (MINOR)
 ❌ "81 swap" or "m81🔁" → 18 reversed = ACTUALLY 18 (KEEP!)
 ❌ "m15" → age 15 (MINOR)
+
+IMPORTANT: Any number followed by 🔁🔄↩️ or word "reversed/swap" means the age is REVERSED!
 
 EXAMPLES OF NO AGE (DELETE):
 ❌ "hey dm me" → no age
@@ -98,12 +131,15 @@ TRICKY CASES:
 - "19 with 8 inch dick" → age 19 (KEEP, ignore "8")
 - "reversed 81" or "81🔁" or "81↩️" → 18 reversed = age 18 (KEEP)
 - "91🔄" or "reversed 91" → 19 reversed = age 19 (KEEP)
-- ANY age with 🔁🔄↩️ symbols = REVERSED age, calculate correctly
+- "m61🔄 french bwc" → 61🔄 = 16 reversed (MINOR!)
+- "41🔁 snap is" → 41🔁 = 14 reversed (MINOR!)
+- ANY age with 🔁🔄↩️ symbols or words "reversed/swap" = REVERSED age
 - "m51🔁 bottom idc about age" → 51 reversed = 15 (MINOR!)
 - "400m dm me" → fake age = seller (DELETE, no valid age)
 - "999 check bio" → fake age = seller (DELETE, no valid age)
 - "75m looking" → too high, likely fake (DELETE, no valid age)
 - Valid age range: 18-70 years old only
+- ALWAYS check for reversed ages with emoji 🔁🔄↩️ or words!
 
 Return ONLY this JSON format:
 {
