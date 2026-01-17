@@ -45,208 +45,44 @@ async function askAI(prompt) {
       await new Promise(resolve => setTimeout(resolve, 300));
     }
   }
-  return { delete: true, minor: false, confidence: 'low', reason: 'AI failed - deleting for safety' };
+  return { has_age_18_plus: false, is_minor: false, confidence: 'low', reason: 'AI failed - deleting for safety' };
 }
 
-// ==================== ULTIMATE STRICT CHECK ====================
+// ==================== IMPROVED STRICT CHECK ====================
 async function checkMessage(text) {
-  const prompt = `Message: "${text}"
-  
-  ABSOLUTE RULES:
-  1. Does this message contain ANY mention of being 18 years old or OLDER?
-  2. If YES → KEEP
-  3. If NO → DELETE
-  4. If mentions age UNDER 18 → DELETE + FLAG (minor)
-  
-  Examples KEEP (has age 18+):
-  - "18m", "f18", "18 top", "M 18 Arab"
-  - "23m", "25f", "30yo", "22 years old"
-  - "age is 19", "I'm 21", "età 24"
-  
-  Examples DELETE (no age 18+):
-  - "hi", "hello", "hey"
-  - "DMs open", "looking for"
-  - "anyone?", "message me"
-  - "test", "lol", "wassup"
-  
-  Examples DELETE + FLAG (minor):
-  - "15", "16yo", "17 looking"
-  - "41 reversed" (means 14)
-  - "51 swap" (means 15)
-  
-  Return JSON:
-  {
-    "has_age_18_plus": boolean (true if ANY age 18+ mentioned),
-    "is_minor": boolean (true if CERTAIN age < 18),
-    "confidence": "high/medium/low",
-    "reason": "brief explanation"
-  }`;
-  
-  return await askAI(prompt);
-}
+  const prompt = `You are analyzing a message in an adult NSFW server. Your ONLY job is to find the AGE of the PERSON WHO WROTE this message.
 
-// ==================== DISCORD ====================
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ]
-});
+Message: "${text}"
 
-client.once('ready', () => {
-  console.log(`✅ ${client.user.tag} ready`);
-  console.log(`📋 Log channel: ${LOG_CHANNEL_ID}`);
-  console.log(`🚨 RULE: No age 18+ = DELETE PERIOD`);
-  client.user.setActivity('18+ ONLY 🔞', { type: 'WATCHING' });
-});
+CRITICAL INSTRUCTIONS:
+1. Find the SENDER'S age (usually at start of message: "19m", "22f", "m21", etc.)
+2. IGNORE all other numbers (preferences, measurements, "no under X", etc.)
+3. If sender's age is 18 or above → has_age_18_plus = true
+4. If sender's age is under 18 → is_minor = true
+5. If NO age found → has_age_18_plus = false
 
-// ==================== MESSAGE HANDLER ====================
-client.on('messageCreate', async (msg) => {
-  if (msg.author.bot) return;
-  if (!msg.guild || msg.guild.id !== SERVER_ID) return;
-  
-  // Skip very short
-  if (!msg.content || msg.content.trim().length < 1) return;
-  
-  try {
-    const isSpecialChannel = msg.channel.id === SPECIAL_CHANNEL_ID;
-    
-    // SPECIAL CHANNEL: Needs photo/video
-    if (isSpecialChannel) {
-      const hasAttachment = msg.attachments?.size > 0 && 
-        Array.from(msg.attachments.values()).some(att => 
-          att.contentType?.startsWith('image/') || 
-          att.contentType?.startsWith('video/')
-        );
-      
-      if (!hasAttachment) {
-        await msg.delete();
-        return;
-      }
-    }
-    
-    const check = await checkMessage(msg.content);
-    console.log(`🤖 "${msg.content.substring(0, 40)}..." → Has age 18+: ${check.has_age_18_plus}, Minor: ${check.is_minor}`);
-    
-    if (!check.has_age_18_plus) {
-      // NO AGE 18+ → DELETE
-      await msg.delete();
-      
-      // ONLY LOG IF CERTAIN MINOR
-      if (check.is_minor && check.confidence === 'high') {
-        console.log(`📋 LOGGING MINOR: ${check.reason}`);
-        await logMinor(msg, check);
-      } else {
-        console.log(`🗑️ Deleted: No age 18+`);
-      }
-    } else {
-      // HAS AGE 18+ → KEEP
-      console.log(`✅ Kept: Has age 18+`);
-    }
-    
-  } catch (error) {
-    console.error('Error:', error.message);
-  }
-});
+EXAMPLES OF VALID 18+ (KEEP):
+✅ "19m looking for fun" → age 19 (KEEP)
+✅ "22m bottom with 7 inch" → age 22, ignore "7" (KEEP)
+✅ "m21 bored dm" → age 21 (KEEP)
+✅ "18 black vers no -19" → age 18, ignore "-19" preference (KEEP)
+✅ "26m top 4 young twinks" → age 26, ignore "young" and "4" (KEEP)
+✅ "20f dm open check bio" → age 20 (KEEP)
+✅ "30 vers anyone?" → age 30 (KEEP)
 
-// ==================== LOGGING ====================
-async function logMinor(msg, check) {
-  try {
-    const logChannel = client.channels.cache.get(LOG_CHANNEL_ID);
-    if (!logChannel) {
-      console.error(`❌ Log channel ${LOG_CHANNEL_ID} not found`);
-      return;
-    }
-    
-    console.log(`📨 Sending minor alert...`);
-    
-    const embed = new EmbedBuilder()
-      .setColor('#FF0000')
-      .setTitle('🚨 MINOR DETECTED')
-      .setAuthor({ 
-        name: msg.author.tag, 
-        iconURL: msg.author.displayAvatarURL({ dynamic: true }) 
-      })
-      .setDescription(`**Message:**\n\`\`\`${msg.content.substring(0, 1000)}\`\`\``)
-      .addFields(
-        { name: 'Reason', value: check.reason || 'Underage detected', inline: false },
-        { name: 'Confidence', value: '✅ HIGH', inline: true },
-        { name: 'User ID', value: `\`${msg.author.id}\``, inline: true },
-        { name: 'Channel', value: `<#${msg.channel.id}>`, inline: true }
-      )
-      .setTimestamp();
-    
-    const buttons = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`ban_${msg.author.id}_${Date.now()}`)
-        .setLabel('Ban User')
-        .setStyle(ButtonStyle.Danger),
-      new ButtonBuilder()
-        .setCustomId(`ignore_${msg.author.id}_${Date.now()}`)
-        .setLabel('Ignore')
-        .setStyle(ButtonStyle.Secondary)
-    );
-    
-    await logChannel.send({ embeds: [embed], components: [buttons] });
-    console.log(`✅ Logged successfully`);
-    
-  } catch (error) {
-    console.error('❌ Logging failed:', error.message);
-  }
-}
+EXAMPLES OF MINORS (FLAG + DELETE):
+❌ "17m curious" → age 17 (MINOR)
+❌ "16 looking for friends" → age 16 (MINOR)
+❌ "61m reversed" → 16 reversed (MINOR)
+❌ "51 swap" → 15 reversed (MINOR)
+❌ "m15" → age 15 (MINOR)
 
-// ==================== BUTTONS ====================
-client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isButton()) return;
-  const [action, userId] = interaction.customId.split('_');
-  
-  await interaction.deferReply({ ephemeral: true });
-  
-  try {
-    if (action === 'ban') {
-      const member = await interaction.guild.members.fetch(userId).catch(() => null);
-      if (member) {
-        await member.ban({ reason: `Minor - banned by ${interaction.user.tag}` });
-        
-        const embed = EmbedBuilder.from(interaction.message.embeds[0])
-          .setFooter({ text: `Banned by ${interaction.user.tag}` });
-        
-        await interaction.message.edit({ embeds: [embed], components: [] });
-        await interaction.editReply({ content: '✅ Banned' });
-      }
-    }
-    else if (action === 'ignore') {
-      const embed = EmbedBuilder.from(interaction.message.embeds[0])
-        .setFooter({ text: `Ignored by ${interaction.user.tag}` });
-      
-      await interaction.message.edit({ embeds: [embed], components: [] });
-      await interaction.editReply({ content: '✅ Ignored' });
-    }
-  } catch (error) {
-    await interaction.editReply({ content: '❌ Error' });
-  }
-});
+EXAMPLES OF NO AGE (DELETE):
+❌ "hey dm me" → no age
+❌ "anyone here?" → no age
+❌ "check bio" → no age
+❌ "dms open" → no age
+❌ "looking for fun" → no age
 
-// ==================== SERVER ====================
-const app = express();
-const PORT = process.env.PORT || 10000;
-
-app.get('/', (req, res) => {
-  res.json({ 
-    status: 'online',
-    bot: client.user?.tag,
-    rule: 'NO AGE 18+ = DELETE PERIOD'
-  });
-});
-
-app.listen(PORT, () => {
-  console.log(`🌐 Health check on port ${PORT}`);
-});
-
-// ==================== LOGIN ====================
-console.log('🔑 Logging in...');
-client.login(process.env.BOT_TOKEN).catch(err => {
-  console.error('❌ Login failed:', err.message);
-  process.exit(1);
-});
+TRICKY CASES:
+- "22m no under 18" → age 22 (KEEP, "under
