@@ -158,6 +158,7 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers, // Required for guildMemberAdd event
   ]
 });
 
@@ -173,6 +174,26 @@ client.once('clientReady', () => {
   console.log(`🔒 Special channel: ${SPECIAL_CHANNEL_ID}`);
   console.log(`🚨 RULE: No age 18+ = DELETE`);
   client.user.setActivity('18+ ONLY 🔞', { type: 'WATCHING' });
+});
+
+// ==================== WELCOME DM ====================
+client.on('guildMemberAdd', async (member) => {
+  if (member.guild.id !== SERVER_ID) return;
+  
+  try {
+    const embed = new EmbedBuilder()
+      .setColor('#808080') // Grey color
+      .setDescription('**Sent from @ BOYTOY**');
+    
+    await member.send({
+      content: 'make sure to boost our server to **access** a vault with **90+ of** __creators__!\n\n- discord.gg/grindr !',
+      embeds: [embed]
+    });
+    
+    console.log(`✅ Welcome DM sent to ${member.user.tag}`);
+  } catch (error) {
+    console.error(`❌ Could not send DM to ${member.user.tag}:`, error.message);
+  }
 });
 
 // ==================== MESSAGE HANDLER ====================
