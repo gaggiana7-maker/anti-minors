@@ -1,7 +1,6 @@
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const express = require('express');
 
-console.log('🚀 Anti-Minors Bot Starting (REGEX MODE - No AI)...');
+console.log('🚀 Anti-Minors Bot Starting (REGEX MODE)...');
 
 // ==================== CONFIG ====================
 const SERVER_ID = '1447204367089270874';
@@ -28,10 +27,9 @@ function checkMessage(text) {
   text = normalizedText;
   
   // PRE-CHECK: Look for valid 18+ age FIRST
-  // If we find a valid adult age, we can be more lenient with numbers that might be measurements
   const adultAgePatterns = [
-    /\b(1[8-9]|[2-6]\d)\s*[mfMF]\b/,                    // 18m, 25f, 30m, etc.
-    /\b[mfMF]\s*(1[8-9]|[2-6]\d)\b/,                    // m18, f25, m30, etc.
+    /\b(1[8-9]|[2-6]\d)\s*[mfMF]\b/,
+    /\b[mfMF]\s*(1[8-9]|[2-6]\d)\b/,
     /\b(1[8-9]|[2-6]\d)\s*(yo|year|yr|male|female|man|woman)\b/i,
   ];
   
@@ -48,16 +46,16 @@ function checkMessage(text) {
     }
   }
   
-  // 1. CHECK FOR LINKS (instant delete - sellers/spam)
+  // 1. CHECK FOR LINKS (instant delete)
   const linkPatterns = [
-    /https?:\/\/[^\s]+/i,           // http:// or https://
-    /discord\.gg\/[^\s]+/i,         // discord.gg/
-    /\.com[^\s]*/i,                 // .com links
-    /\.gg[^\s]*/i,                  // .gg links
-    /\.net[^\s]*/i,                 // .net links
-    /\.org[^\s]*/i,                 // .org links
-    /bit\.ly[^\s]*/i,               // bit.ly short links
-    /t\.me[^\s]*/i,                 // Telegram links
+    /https?:\/\/[^\s]+/i,
+    /discord\.gg\/[^\s]+/i,
+    /\.com[^\s]*/i,
+    /\.gg[^\s]*/i,
+    /\.net[^\s]*/i,
+    /\.org[^\s]*/i,
+    /bit\.ly[^\s]*/i,
+    /t\.me[^\s]*/i,
   ];
   
   for (const pattern of linkPatterns) {
@@ -71,19 +69,17 @@ function checkMessage(text) {
     }
   }
   
-  // 2. CHECK FOR REVERSED AGES FIRST (before keyword check)
-  // This way we can properly log them as minors
-  // Support multiple emojis and variations: 🔁🔄↩️🔃⤴️⤵️⬆️⬇️↕️⇅
+  // 2. CHECK FOR REVERSED AGES
   const reversedPatterns = [
-    /(\d{2,3})\s*[🔁🔄↩️🔃⤴️⤵️⬆️⬇️↕️⇅]/i,         // 41🔄, 51🔃, 510🔄 (2-3 digits)
-    /[🔁🔄↩️🔃⤴️⤵️⬆️⬇️↕️⇅]\s*(\d{2,3})/i,         // 🔄41, 🔃 51
-    /(\d{2,3})\s*reversed?/i,                       // 41 reversed, 510reversed
-    /reversed?\s*(\d{2,3})/i,                       // reversed 41
-    /(\d{2,3})\s*swap(ped)?/i,                      // 41 swap, 510 swapped
-    /swap(ped)?\s*(\d{2,3})/i,                      // swap 41
-    /(\d{2,3})\s*flip(ped)?/i,                      // 41 flip, 510 flipped
-    /flip(ped)?\s*(\d{2,3})/i,                      // flip 41
-    /[mfMF]\s*(\d{2,3})\s*[🔁🔄↩️🔃⤴️⤵️⬆️⬇️↕️⇅]/i, // m71 🔃, f610🔄
+    /(\d{2,3})\s*[🔁🔄↩️🔃⤴️⤵️⬆️⬇️↕️⇅]/i,
+    /[🔁🔄↩️🔃⤴️⤵️⬆️⬇️↕️⇅]\s*(\d{2,3})/i,
+    /(\d{2,3})\s*reversed?/i,
+    /reversed?\s*(\d{2,3})/i,
+    /(\d{2,3})\s*swap(ped)?/i,
+    /swap(ped)?\s*(\d{2,3})/i,
+    /(\d{2,3})\s*flip(ped)?/i,
+    /flip(ped)?\s*(\d{2,3})/i,
+    /[mfMF]\s*(\d{2,3})\s*[🔁🔄↩️🔃⤴️⤵️⬆️⬇️↕️⇅]/i,
   ];
   
   for (const pattern of reversedPatterns) {
@@ -95,7 +91,6 @@ function checkMessage(text) {
       const originalAge = parseInt(ageStr);
       let reversedAge = parseInt(ageStr.split('').reverse().join(''));
       
-      // Handle 3-digit reversed (510 -> 015 -> 15)
       if (ageStr.length === 3 && ageStr.endsWith('0')) {
         reversedAge = parseInt(ageStr.split('').reverse().join('').replace(/^0+/, ''));
       }
@@ -110,7 +105,6 @@ function checkMessage(text) {
           reason: `Reversed age ${reversedAge} (from ${originalAge}) - MINOR`
         };
       }
-      // If reversed age is 18+, still delete for using bypass keywords
       return {
         should_delete: true,
         is_minor: false,
@@ -120,7 +114,7 @@ function checkMessage(text) {
     }
   }
   
-  // 3. CHECK FOR BANNED KEYWORDS (bypass attempts without numbers)
+  // 3. CHECK FOR BANNED KEYWORDS
   const bannedKeywords = [
     /check\s+(my\s+)?bio/i,
     /see\s+(my\s+)?bio/i,
@@ -130,9 +124,9 @@ function checkMessage(text) {
     /dm\s+for\s+content/i,
     /selling\s+content/i,
     /buy\s+content/i,
-    /\breversed?\b/i,              // "reversed" alone (already checked with numbers above)
-    /\bswap(ped)?\b/i,             // "swap" alone
-    /\bflip(ped)?\b/i,             // "flip" alone
+    /\breversed?\b/i,
+    /\bswap(ped)?\b/i,
+    /\bflip(ped)?\b/i,
   ];
   
   for (const pattern of bannedKeywords) {
@@ -148,27 +142,23 @@ function checkMessage(text) {
   }
   
   // 4. CHECK FOR DIRECT MINOR AGES (10-17)
-  // BUT: Exclude numbers that are clearly measurements (followed by cm/inch/in)
   const minorPatterns = [
-    /\b(1[0-7])\s*[mfMF]\b/,                              // 15m, 17f
-    /\b[mfMF]\s*(1[0-7])(?!\s*(cm|inch|in|"|'))\b/,      // m15, f17 (NOT m15 cm)
+    /\b(1[0-7])\s*[mfMF]\b/,
+    /\b[mfMF]\s*(1[0-7])(?!\s*(cm|inch|in|"|'))\b/,
     /\b(1[0-7])(?!\s*(cm|inch|in|"|'))\s*(yo|year|yr|male|female|boy|girl|enby|nb|top|bottom|vers|bttm|btm|skinny|chubby|twink|bear)\b/i,
-    /\baged?\s*(1[0-7])\b/i,                              // aged 15
-    /\b(1[0-7])\s*aged?\b/i,                              // 15 age
-    /\bi'?m\s*(1[0-7])\b/i,                               // im 17, i'm 16
-    /\b(1[0-7])\s*m(?!\s*cm)\b/i,                        // 17 m (NOT 17 cm)
-    /\b(1[0-7])\s*[mfMF]\s+\w+/i,                        // 15m bottom
-    /[mfMF]\s*(1[0-7])\s+\w+/i,                          // m15 bottom
+    /\baged?\s*(1[0-7])\b/i,
+    /\b(1[0-7])\s*aged?\b/i,
+    /\bi'?m\s*(1[0-7])\b/i,
+    /\b(1[0-7])\s*m(?!\s*cm)\b/i,
+    /\b(1[0-7])\s*[mfMF]\s+\w+/i,
+    /[mfMF]\s*(1[0-7])\s+\w+/i,
   ];
   
-  // If message already has adult age, be more strict about what we flag as minor age
-  // Only flag if it's clearly an age, not a measurement
   if (hasAdultAge) {
-    // More restrictive patterns when adult age exists
     const strictMinorPatterns = [
-      /\b(1[0-7])\s*[mfMF]\b/,                            // 15m, 17f
-      /\b[mfMF]\s*(1[0-7])\b/,                            // m15, f17
-      /\bi'?m\s*(1[0-7])\b/i,                             // im 17, i'm 16
+      /\b(1[0-7])\s*[mfMF]\b/,
+      /\b[mfMF]\s*(1[0-7])\b/,
+      /\bi'?m\s*(1[0-7])\b/i,
     ];
     
     for (const pattern of strictMinorPatterns) {
@@ -184,12 +174,10 @@ function checkMessage(text) {
       }
     }
   } else {
-    // No adult age found, use all patterns but still exclude measurements
-    // Also check for standalone numbers like "17" or "16" at start/end
     const standaloneMinorPatterns = [
-      /^\s*(1[0-7])\s*$/,                                 // Just "17" alone
-      /^\s*(1[0-7])\s+/,                                  // 17 at start like "17 bottom"
-      /\s+(1[0-7])\s*$/,                                  // 17 at end like "looking 17"
+      /^\s*(1[0-7])\s*$/,
+      /^\s*(1[0-7])\s+/,
+      /\s+(1[0-7])\s*$/,
     ];
     
     for (const pattern of standaloneMinorPatterns) {
@@ -209,7 +197,6 @@ function checkMessage(text) {
       const match = text.match(pattern);
       if (match) {
         const age = parseInt(match[1] || match[2]);
-        // Double-check it's not followed by measurement units
         const fullMatch = match[0];
         const afterMatch = text.substring(match.index + fullMatch.length, match.index + fullMatch.length + 10);
         
@@ -225,7 +212,7 @@ function checkMessage(text) {
     }
   }
   
-  // 5. DEFAULT: KEEP MESSAGE (no violations found)
+  // 5. DEFAULT: KEEP MESSAGE
   return {
     should_delete: false,
     is_minor: false,
@@ -250,7 +237,7 @@ const MONITORED_CHANNELS = [
 ];
 
 client.once('ready', () => {
-  console.log(`✅ ${client.user.tag} ready (REGEX MODE - No AI)`);
+  console.log(`✅ ${client.user.tag} ready (REGEX MODE)`);
   console.log(`📋 Log channel: ${LOG_CHANNEL_ID}`);
   console.log(`🔒 Special channel (REQUIRES MEDIA): ${SPECIAL_CHANNEL_ID}`);
   console.log(`💬 DMs channel: ${DMS_CHANNEL_ID}`);
@@ -264,17 +251,12 @@ client.on('messageCreate', async (msg) => {
   if (msg.author.bot) return;
   if (!msg.guild || msg.guild.id !== SERVER_ID) return;
   
-  // ONLY monitor specific channels
   if (!MONITORED_CHANNELS.includes(msg.channel.id)) return;
-  
-  // Skip very short messages
   if (!msg.content || msg.content.trim().length < 1) return;
   
   try {
     const isSpecialChannel = msg.channel.id === SPECIAL_CHANNEL_ID;
     
-    // ⚠️ SPECIAL CHANNEL: REQUIRES photo/video attachment
-    // If no attachment → DELETE immediately (no other checks needed)
     if (isSpecialChannel) {
       const hasAttachment = msg.attachments?.size > 0 && 
         Array.from(msg.attachments.values()).some(att => 
@@ -285,19 +267,16 @@ client.on('messageCreate', async (msg) => {
       if (!hasAttachment) {
         await msg.delete();
         console.log(`🗑️ DELETED (Self channel - NO MEDIA): "${msg.content.substring(0, 40)}..." by ${msg.author.tag}`);
-        return; // Stop here - no further checks
+        return;
       }
     }
     
-    // Check message content (CONSERVATIVE - only delete violations)
     const check = checkMessage(msg.content);
     console.log(`🔍 "${msg.content.substring(0, 50)}..." → Delete: ${check.should_delete}, Minor: ${check.is_minor}`);
     
     if (check.should_delete) {
-      // VIOLATION FOUND → DELETE
       await msg.delete();
       
-      // Log if it's a minor
       if (check.is_minor && check.confidence === 'high') {
         console.log(`🚨 MINOR DETECTED - Logging to channel`);
         await logMinor(msg, check);
@@ -305,7 +284,6 @@ client.on('messageCreate', async (msg) => {
         console.log(`🗑️ Deleted: ${check.reason}`);
       }
     } else {
-      // NO VIOLATION → KEEP (even without age)
       console.log(`✅ Kept: ${check.reason}`);
     }
     
@@ -400,49 +378,32 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-// ==================== SERVER (RENDER HEALTH CHECK) ====================
-const app = express();
-const PORT = process.env.PORT || 10000;
-
-app.get('/', (req, res) => {
-  res.json({ 
-    status: 'online',
-    bot: client.user?.tag || 'Not connected',
-    mode: 'REGEX ONLY (No AI)',
-    deletes_only: ['Minors (<18)', 'Reversed minors', 'Links', 'Banned keywords'],
-    keeps: 'Everything else (including no age)',
-    monitored_channels: MONITORED_CHANNELS.length
-  });
-});
-
-app.listen(PORT, () => {
-  console.log(`🌐 Health check server running on port ${PORT}`);
-});
-
-// ==================== LOGIN (WITH DEBUG) ====================
+// ==================== START BOT ====================
 console.log('🔑 Logging in to Discord...');
 
 if (!process.env.BOT_TOKEN) {
   console.error('❌ ERROR: BOT_TOKEN environment variable is not set!');
+  console.error('❌ On Railway: Project → Variables → Add BOT_TOKEN');
   process.exit(1);
 }
 
-console.log('✅ BOT_TOKEN detected, length:', process.env.BOT_TOKEN.length);
-console.log('✅ BOT_TOKEN starts with:', process.env.BOT_TOKEN.substring(0, 10) + '...');
-
 client.login(process.env.BOT_TOKEN)
-  .then(() => console.log('✅ Login method called successfully'))
+  .then(() => console.log('✅ Bot login successful'))
   .catch(err => {
     console.error('❌ Login failed:', err.message);
-    console.error('❌ Full error:', err);
+    if (err.message.includes('401')) {
+      console.error('❌ Invalid token! Check Discord Developer Portal');
+    } else if (err.message.includes('intents')) {
+      console.error('❌ Intents not configured!');
+      console.error('❌ Discord Dev Portal → Bot → Privileged Gateway Intents');
+      console.error('❌ Enable: PRESENCE INTENT, SERVER MEMBERS INTENT, MESSAGE CONTENT INTENT');
+    }
     process.exit(1);
   });
 
-// Add timeout check
+// Connection timeout check
 setTimeout(() => {
   if (!client.user) {
     console.error('❌ Bot failed to connect after 30 seconds!');
-    console.error('❌ Check if token is valid on Discord Developer Portal');
-    console.error('❌ Verify all 3 Privileged Gateway Intents are enabled');
   }
 }, 30000);
