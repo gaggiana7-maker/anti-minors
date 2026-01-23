@@ -1,16 +1,15 @@
 {
   "name": "anti-minors-bot",
-  "version": "2.0.0",
-  "description": "Discord bot for age verification (Regex-based, no AI)",
+  "version": "1.0.0",
+  "description": "Discord bot to detect and block minors",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "discord.js": "^14.14.1",
-    "express": "^4.18.2"
+    "discord.js": "^14.14.1"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.0.0"
   }
 }
