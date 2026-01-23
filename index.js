@@ -419,7 +419,7 @@ app.listen(PORT, () => {
   console.log(`🌐 Health check server running on port ${PORT}`);
 });
 
-// ==================== LOGIN ====================
+// ==================== LOGIN (WITH DEBUG) ====================
 console.log('🔑 Logging in to Discord...');
 
 if (!process.env.BOT_TOKEN) {
@@ -427,7 +427,22 @@ if (!process.env.BOT_TOKEN) {
   process.exit(1);
 }
 
-client.login(process.env.BOT_TOKEN).catch(err => {
-  console.error('❌ Login failed:', err.message);
-  process.exit(1);
-});
+console.log('✅ BOT_TOKEN detected, length:', process.env.BOT_TOKEN.length);
+console.log('✅ BOT_TOKEN starts with:', process.env.BOT_TOKEN.substring(0, 10) + '...');
+
+client.login(process.env.BOT_TOKEN)
+  .then(() => console.log('✅ Login method called successfully'))
+  .catch(err => {
+    console.error('❌ Login failed:', err.message);
+    console.error('❌ Full error:', err);
+    process.exit(1);
+  });
+
+// Add timeout check
+setTimeout(() => {
+  if (!client.user) {
+    console.error('❌ Bot failed to connect after 30 seconds!');
+    console.error('❌ Check if token is valid on Discord Developer Portal');
+    console.error('❌ Verify all 3 Privileged Gateway Intents are enabled');
+  }
+}, 30000);
