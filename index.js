@@ -343,6 +343,62 @@ async function logMinor(msg, check) {
   }
 }
 
+// ==================== DELETE ALL USER MESSAGES ====================
+async function deleteAllUserMessages(guild, userId) {
+  try {
+    let totalDeleted = 0;
+    
+    for (const channelId of MONITORED_CHANNELS) {
+      try {
+        const channel = guild.channels.cache.get(channelId);
+        if (!channel || !channel.isTextBased()) continue;
+        
+        console.log(`🔍 Searching for messages from ${userId} in <#${channelId}>...`);
+        
+        let fetched = true;
+        let lastMessageId = null;
+        
+        while (fetched) {
+          const options = { limit: 100 };
+          if (lastMessageId) options.before = lastMessageId;
+          
+          const messages = await channel.messages.fetch(options);
+          
+          if (messages.size === 0) {
+            fetched = false;
+            break;
+          }
+          
+          const userMessages = messages.filter(m => m.author.id === userId);
+          
+          for (const message of userMessages.values()) {
+            try {
+              await message.delete();
+              totalDeleted++;
+              console.log(`  ✅ Deleted message from ${userId}`);
+            } catch (error) {
+              console.error(`  ⚠️ Failed to delete message: ${error.message}`);
+            }
+          }
+          
+          lastMessageId = messages.last().id;
+          
+          // Rate limit protection
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      } catch (error) {
+        console.error(`⚠️ Error searching channel ${channelId}: ${error.message}`);
+      }
+    }
+    
+    console.log(`✅ Deleted ${totalDeleted} messages from user ${userId}`);
+    return totalDeleted;
+  } catch (error) {
+    console.error('❌ Error deleting user messages:', error.message);
+    return 0;
+  }
+}
+
 // ==================== BUTTONS ====================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isButton()) return;
@@ -354,13 +410,18 @@ client.on('interactionCreate', async (interaction) => {
     if (action === 'ban') {
       const member = await interaction.guild.members.fetch(userId).catch(() => null);
       if (member) {
+        // Delete all user messages first
+        console.log(`🗑️ Starting message deletion for user ${userId}...`);
+        const deletedCount = await deleteAllUserMessages(interaction.guild, userId);
+        
+        // Then ban the user
         await member.ban({ reason: `Minor - banned by ${interaction.user.tag}` });
         
         const embed = EmbedBuilder.from(interaction.message.embeds[0])
-          .setFooter({ text: `Banned by ${interaction.user.tag}` });
+          .setFooter({ text: `Banned by ${interaction.user.tag} | ${deletedCount} messages deleted` });
         
         await interaction.message.edit({ embeds: [embed], components: [] });
-        await interaction.editReply({ content: '✅ User banned successfully' });
+        await interaction.editReply({ content: `✅ User banned successfully\n✅ Deleted ${deletedCount} message(s)` });
       } else {
         await interaction.editReply({ content: '❌ User not found or already left' });
       }
@@ -407,3 +468,4 @@ setTimeout(() => {
     console.error('❌ Bot failed to connect after 30 seconds!');
   }
 }, 30000);
+  
